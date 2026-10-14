@@ -22,7 +22,8 @@ export default function Overview() {
   const checks = diag && diag.data ? diag.data.checks || [] : null
   const rows = insp ? insp.rows || [] : []
 
-  const failing = checks ? checks.filter((c) => c.status === 'fail').length : 0
+  // The server reports 'ok' | 'warning' | 'error' | 'na'.
+  const failing = checks ? checks.filter((c) => c.status === 'error').length : 0
   const health = diag === undefined ? 'Running diagnostics…'
     : !checks ? 'Diagnostics unavailable.'
       : failing ? `${failing} check${failing === 1 ? '' : 's'} failing`

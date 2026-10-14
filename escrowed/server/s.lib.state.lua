@@ -11,11 +11,15 @@ local Session = RZ.Session
 local Cooldowns = RZ.Cooldowns
 
 local players = {}
+local byCitizen = {}
 
 function Store.Track(source, citizenid)
     local existing = players[source]
     if existing and existing.citizenid == citizenid then
         return existing
+    end
+    if existing and byCitizen[existing.citizenid] == existing then
+        byCitizen[existing.citizenid] = nil
     end
 
     local record = {
@@ -31,7 +35,10 @@ function Store.Track(source, citizenid)
         burnLastHealth = nil, burnIgnored = nil, bagSnapshot = nil,
         deathId = nil, deathCoords = nil, eliminationZoneId = nil,
         knockRemainingMs = nil, knockDeadline = nil, reviverSrc = nil,
-        healthGraceUntil = nil,
+        healthGraceUntil = nil, downedAt = nil, lastReclaimAt = nil, medicalTookOver = nil,
+        eliminatedAt = nil, elimSeenDead = nil, elimKillResent = nil,
+        affiliation = nil, canSee = nil, visibilityCheckedAt = 0,
+        lastHitAt = nil, lastAttackAt = nil,
     }
 
     for _, id in ipairs(GetPlayerIdentifiers(source) or {}) do
@@ -42,10 +49,15 @@ function Store.Track(source, citizenid)
     end
 
     players[source] = record
+    if citizenid then byCitizen[citizenid] = record end
     return record
 end
 
 function Store.Untrack(source)
+    local record = players[source]
+    if record and record.citizenid and byCitizen[record.citizenid] == record then
+        byCitizen[record.citizenid] = nil
+    end
     players[source] = nil
 end
 
@@ -58,16 +70,13 @@ function Store.All()
 end
 
 function Store.GetByCitizenId(citizenid)
-    for _, record in pairs(players) do
-        if record.citizenid == citizenid then
-            return record
-        end
-    end
-    return nil
+    if citizenid == nil then return nil end
+    return byCitizen[citizenid]
 end
 
 function Store.Clear()
     players = {}
+    byCitizen = {}
 end
 
 local function publish(record)
@@ -109,7 +118,9 @@ function Store.SetState(source, newState, reason)
         return false
     end
 
-    RZ.Log.Debug(('state %s: %s -> %s (%s)'):format(Store.NameOf(source), record.state, newState, reason or '-'))
+    if Config.Debug then
+        RZ.Log.Debug(('state %s: %s -> %s (%s)'):format(Store.NameOf(source), record.state, newState, reason or '-'))
+    end
     record.state = newState
     record.stateSince = RZ.Now()
     publish(record)
@@ -120,7 +131,9 @@ function Store.ForceState(source, newState, reason)
     local record = players[source]
     if not record then return end
     if record.state == newState then return end
-    RZ.Log.Debug(('state FORCE %s: %s -> %s (%s)'):format(Store.NameOf(source), record.state, newState, reason))
+    if Config.Debug then
+        RZ.Log.Debug(('state FORCE %s: %s -> %s (%s)'):format(Store.NameOf(source), record.state, newState, reason))
+    end
     record.state = newState
     record.stateSince = RZ.Now()
     publish(record)
@@ -405,6 +418,13 @@ end
 function Session.IsCurrent(zoneId, sessionId)
     if type(sessionId) ~= 'string' or sessionId == '' then return false end
     return current[zoneId] == sessionId
+end
+
+function Session.IsLiveAnywhere(sessionId)
+    for _, live in pairs(current) do
+        if live == sessionId then return true end
+    end
+    return false
 end
 
 function Session.OnStart(callback)

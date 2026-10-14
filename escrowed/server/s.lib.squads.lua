@@ -726,7 +726,7 @@ end
 function Groups.IsGroupIdCurrent(groupId, zoneId)
     if Groups.IsGangGroupId(groupId) then
         local gangId = Groups.GangIdFromGroupId(groupId)
-        return gangId ~= nil and Fw.GetGang(gangId) ~= nil
+        return gangId ~= nil and Gangs.Exists(gangId)
     end
     if Groups.IsSoloSquadGroupId(groupId) then
         local squadId, sessionId = Groups.SplitSoloSquadGroupId(groupId)

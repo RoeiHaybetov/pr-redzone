@@ -193,16 +193,23 @@ function Fw.Gang(source)
     if not player then return nil, false end
 
     if f == 'esx' then
-        local job = player.job
-        if type(job) ~= 'table' or type(job.name) ~= 'string' then return unaffiliated() end
         local excluded = Config.Gangs and Config.Gangs.notGangs
-        if type(excluded) == 'table' then
-            for i = 1, #excluded do
-                if excluded[i] == job.name then return unaffiliated() end
+        local function usable(job)
+            if type(job) ~= 'table' or type(job.name) ~= 'string' or job.name == '' then return false end
+            if type(excluded) == 'table' then
+                for i = 1, #excluded do
+                    if excluded[i] == job.name then return false end
+                end
             end
+            return true
         end
 
-        return { name = job.name, label = job.label or job.name }, true
+        -- ESX has no gangs. Servers that run gangs on ESX almost always put them in a second
+        -- job slot (esx_job2 and its forks), so that wins over the regular job when present.
+        local job2 = player.job2
+        if usable(job2) then return { name = job2.name, label = job2.label or job2.name }, true end
+        if usable(player.job) then return { name = player.job.name, label = player.job.label or player.job.name }, true end
+        return unaffiliated()
     end
 
     local data = player.PlayerData
@@ -247,9 +254,20 @@ local GET_JOBS = {
     end,
 }
 
+-- The full job table crosses a resource boundary on every call (it is serialised each
+-- time), and the blocked-job check can ask for it per player per tick. Jobs change rarely,
+-- so one copy is reused for a while.
+local JOBS_CACHE_MS = 30000
+local jobsCache, jobsCachedAt = nil, 0
+
 function Fw.GetJobs()
+    local now = GetGameTimer()
+    if jobsCache and (now - jobsCachedAt) < JOBS_CACHE_MS then return jobsCache end
     local fn = GET_JOBS[resolve()]
-    return fn and fn() or {}
+    local jobs = fn and fn() or nil
+    if type(jobs) ~= 'table' then return {} end
+    jobsCache, jobsCachedAt = jobs, now
+    return jobs
 end
 
 local GET_ITEMS = {
@@ -436,19 +454,303 @@ CreateThread(function()
     print('^1[pr-redzone] set Config.Framework explicitly, or report the above — the resource will misbehave until this is fixed.^0')
 end)
 
+-- =============================================================================
+--  Gang source detection
+--
+--  The gang a player belongs to can live in the framework (Qbox/QBCore PlayerData.gang,
+--  an ESX second job) or in a separate gang resource with its own exports. At start-up,
+--  and again whenever another resource starts or stops, every running resource that looks
+--  like a gang system is probed for a player-gang export, and the first one that answers
+--  becomes the primary source. The framework is always kept as the fallback, so a wrong
+--  guess can only ever add gangs, never hide the ones the framework already knows.
+-- =============================================================================
+
+local KNOWN_GANG_RESOURCES = {
+    'rcore_gangs', 'cs_gangs', 'brutal_gangs', 'ak47_gangs', 'ak47_qb_gangs', 'op-crime',
+    'origen_ilegal', 'lunar_gangs', 'kibra-gangs', 'codem-gangs', '0r-gangs', 'jg-gangs',
+    'tk_gangs', 'zat-gangs', 'qs-gangs', 'mGangs', 'drc_gangs', 'esx_gangs', 'pug-gangs',
+}
+
+-- Player-centric names only. A bare GetGang usually means "look a gang up by name", and
+-- calling it with a server id would quietly report nobody as being in a gang.
+local GANG_EXPORT_GUESSES = {
+    'GetPlayerGang', 'getPlayerGang', 'GetPlayerGangData', 'getPlayerGangData',
+    'GetGangByPlayer', 'getGangByPlayer', 'GetPlayerGangName', 'getPlayerGangName',
+    'GetPlayerOrganisation', 'getPlayerOrganisation', 'GetPlayerOrganization', 'getPlayerOrganization',
+    'GetPlayerOrg', 'getPlayerOrg', 'GetPlayerCrew', 'getPlayerCrew',
+    'GetPlayerFaction', 'getPlayerFaction', 'GetPlayerFamily', 'getPlayerFamily',
+}
+
+local GANG_NAME_HINTS = { 'gang', 'crime', 'organi', 'faction', 'crew', 'mafia', 'cartel', 'famil', 'ilegal', 'illegal' }
+
+local NOT_GANG_SOURCES = {
+    ['qb-gangs'] = true, ['qb-gangmenu'] = true, ['qb-management'] = true, ['qbx_management'] = true,
+    ['qb-bossmenu'] = true, ['esx_society'] = true,
+}
+
+local gangSource = nil   -- { resource, export, label } or false when only the framework is used
+local gangArgMode = nil  -- 'source' | 'identity', learned from the first real answer
+local gangCache = {}
+local GANG_CACHE_MS = 2000
+local labelCache = {}
+
+local function cfgGangs()
+    return Config.Gangs or {}
+end
+
+local function exportExists(resource, name)
+    local ok, err = pcall(function() return exports[resource][name](exports[resource], -1) end)
+    if ok then return true end
+    err = tostring(err)
+    return not (err:find('No such export', 1, true) or err:find('does not exist', 1, true))
+end
+
+local function looksLikeGangResource(name)
+    local lowered = name:lower()
+    for i = 1, #GANG_NAME_HINTS do
+        if lowered:find(GANG_NAME_HINTS[i], 1, true) then return true end
+    end
+    return false
+end
+
+local function candidateResources()
+    local list, seen = {}, {}
+    local function add(name)
+        if seen[name] or name == RZ.RESOURCE or NOT_GANG_SOURCES[name] then return end
+        if GetResourceState(name) ~= 'started' then return end
+        seen[name] = true
+        list[#list + 1] = name
+    end
+    for i = 1, #KNOWN_GANG_RESOURCES do add(KNOWN_GANG_RESOURCES[i]) end
+    for i = 0, GetNumResources() - 1 do
+        local name = GetResourceByFindIndex(i)
+        if type(name) == 'string' and looksLikeGangResource(name) then add(name) end
+    end
+    return list
+end
+
+function Gangs.Detect(quiet)
+    gangCache = {}
+    gangArgMode = nil
+
+    local cfg = cfgGangs()
+    if type(cfg.resource) == 'string' and cfg.resource ~= '' and cfg.resource ~= 'auto' then
+        if cfg.resource == 'framework' then
+            gangSource = false
+        elseif GetResourceState(cfg.resource) == 'started' then
+            local export = cfg.export
+            if type(export) ~= 'string' or export == '' then
+                for i = 1, #GANG_EXPORT_GUESSES do
+                    if exportExists(cfg.resource, GANG_EXPORT_GUESSES[i]) then
+                        export = GANG_EXPORT_GUESSES[i]
+                        break
+                    end
+                end
+            end
+            gangSource = export and { resource = cfg.resource, export = export } or false
+        else
+            gangSource = false
+            print(('^3[pr-redzone] Config.Gangs.resource is "%s" but that resource is not started — using framework gangs.^0')
+                :format(cfg.resource))
+        end
+    else
+        gangSource = false
+        local candidates = candidateResources()
+        for i = 1, #candidates do
+            local resource = candidates[i]
+            for j = 1, #GANG_EXPORT_GUESSES do
+                if exportExists(resource, GANG_EXPORT_GUESSES[j]) then
+                    gangSource = { resource = resource, export = GANG_EXPORT_GUESSES[j] }
+                    break
+                end
+            end
+            if gangSource then break end
+        end
+    end
+
+    if quiet then return gangSource end
+
+    local fallback = ('%s gangs'):format(Fw.Describe())
+    if Fw.Flavour() == 'esx' then fallback = 'es_extended job2 / job' end
+    if gangSource then
+        print(('[pr-redzone] gangs: reading exports["%s"]:%s(player), with %s as the fallback.')
+            :format(gangSource.resource, gangSource.export, fallback))
+    else
+        print(('[pr-redzone] gangs: no separate gang resource found — using %s.'):format(fallback))
+    end
+
+    local solo = cfg.soloGangs
+    local soloText = type(solo) == 'table' and #solo > 0 and table.concat(solo, ', ') or '(none)'
+    if cfg.requireGang ~= false then
+        print(('[pr-redzone] gangs: players with no gang cannot see or enter the RedZone. Solo gang: %s.')
+            :format(soloText))
+    else
+        print('[pr-redzone] gangs: players with no gang fight as Solo Squads (Config.Gangs.requireGang = false).')
+    end
+    return gangSource
+end
+
+local function normalizeGang(value, depth)
+    local t = type(value)
+    if t == 'string' then
+        if value == '' then return nil end
+        return { name = value, label = value }
+    end
+    if t ~= 'table' or (depth or 0) > 2 then return nil end
+
+    for _, key in ipairs({ 'name', 'gang', 'gangName', 'gang_name', 'organisation', 'organization', 'tag', 'label', 'id' }) do
+        local v = value[key]
+        if type(v) == 'number' then v = tostring(v) end
+        if type(v) == 'string' and v ~= '' then
+            local label = value.label or value.title or value.displayName or value.display or v
+            return { name = v, label = type(label) == 'string' and label or v }
+        end
+    end
+
+    for _, key in ipairs({ 'gang', 'data', 'organisation', 'organization' }) do
+        if type(value[key]) == 'table' then return normalizeGang(value[key], (depth or 0) + 1) end
+    end
+    return nil
+end
+
+local function callGangExport(source)
+    if not gangSource then return nil end
+    local resource, export = gangSource.resource, gangSource.export
+    if GetResourceState(resource) ~= 'started' then return nil end
+
+    local function call(arg)
+        local ok, res = pcall(function() return exports[resource][export](exports[resource], arg) end)
+        if not ok then return nil, false end
+        return normalizeGang(res), true
+    end
+
+    if gangArgMode ~= 'identity' then
+        local gang = call(source)
+        if gang then gangArgMode = 'source' return gang end
+        if gangArgMode == 'source' then return nil end
+    end
+
+    local identity = Fw.Identity(source)
+    if identity then
+        local gang = call(identity)
+        if gang then gangArgMode = 'identity' return gang end
+    end
+    return nil
+end
+
+local function frameworkGang(source)
+    local gang, loaded = Fw.Gang(source)
+    if not loaded then return nil, false end
+    return normalizeGang(gang), true
+end
+
+local function readGang(source)
+    if gangSource == nil then Gangs.Detect(true) end
+
+    local fromExport = callGangExport(source)
+    local fromFramework, loaded = frameworkGang(source)
+
+    if not loaded and Fw.IsStandalone() then
+        loaded = GetPlayerName(source) ~= nil
+    end
+    if not loaded then return nil, false end
+
+    local function real(g)
+        if not g then return false end
+        local n = g.name:lower()
+        return n ~= NO_GANG and n ~= 'unemployed'
+    end
+
+    if real(fromExport) then return fromExport, true end
+    if real(fromFramework) then return fromFramework, true end
+
+    local ply = Player(source)
+    local bag = ply and ply.state and (ply.state.gang or ply.state.gangName)
+    local fromBag = normalizeGang(bag)
+    if real(fromBag) then return fromBag, true end
+
+    return fromExport or fromFramework or fromBag, true
+end
+
+local function matchesList(gang, list)
+    if type(list) ~= 'table' then return false end
+    local name = gang.name:lower()
+    local label = type(gang.label) == 'string' and gang.label:lower() or nil
+    for i = 1, #list do
+        local entry = tostring(list[i]):lower()
+        if entry == name or entry == label then return true end
+    end
+    return false
+end
+
+local function gangExists(name)
+    if gangSource then return true end
+    local f = Fw.Flavour()
+    if f ~= 'qbx' and f ~= 'qb' then return true end
+    return Fw.GetGang(name) ~= nil
+end
+
+-- 'gang' | 'solo' | 'none' | 'invalid', or nil when the player's data is not loaded yet.
+function Gangs.Classify(source)
+    local now = GetGameTimer()
+    local cached = gangCache[source]
+    if cached and (now - cached.at) < GANG_CACHE_MS then
+        return cached.kind, cached.name, cached.label
+    end
+
+    local gang, loaded = readGang(source)
+    local kind, name, label
+    if loaded then
+        local cfg = cfgGangs()
+        if not gang or gang.name == '' or gang.name:lower() == NO_GANG
+            or matchesList(gang, cfg.notGangs) then
+            kind = 'none'
+        elseif matchesList(gang, cfg.soloGangs) then
+            kind, name, label = 'solo', gang.name, gang.label
+        elseif not gangExists(gang.name) then
+            kind, name = 'invalid', gang.name
+        else
+            kind, name, label = 'gang', gang.name, gang.label
+            labelCache[name] = label
+        end
+    end
+
+    gangCache[source] = { at = now, kind = kind, name = name, label = label }
+    return kind, name, label
+end
+
+function Gangs.Describe()
+    if gangSource == nil then Gangs.Detect(true) end
+    if gangSource then
+        return ('exports["%s"]:%s, framework as fallback'):format(gangSource.resource, gangSource.export), true
+    end
+    return ('%s gangs'):format(Fw.Describe()), false
+end
+
+function Gangs.Forget(source)
+    if source then gangCache[source] = nil else gangCache = {} end
+end
+
 function Gangs.GetPlayerGang(source)
-    return RZ.Fw.Gang(source)
+    local kind, name, label = Gangs.Classify(source)
+    if kind == nil then return nil, false end
+    if kind == 'none' then return { name = NO_GANG, label = 'No Gang' }, true end
+    return { name = name, label = label or name }, true
+end
+
+function Gangs.Exists(gangId)
+    if type(gangId) ~= 'string' or gangId == '' then return false end
+    return gangExists(gangId)
 end
 
 local function resolveGang(source)
-    local gang, loaded = RZ.Fw.Gang(source)
-    if not loaded then return nil, RZ.Reject.UNVERIFIABLE end
-    if not gang or type(gang.name) ~= 'string' or gang.name == '' then
-        return nil, RZ.Reject.UNVERIFIABLE
-    end
-    if gang.name == NO_GANG then return nil, RZ.Reject.SOLO end
-    if not RZ.Fw.GetGang(gang.name) then return nil, RZ.Reject.INVALID_GANG end
-    return gang.name, nil
+    local kind, name = Gangs.Classify(source)
+    if kind == nil then return nil, RZ.Reject.UNVERIFIABLE end
+    if kind == 'gang' then return name, nil end
+    if kind == 'solo' then return nil, RZ.Reject.SOLO end
+    if kind == 'invalid' then return nil, RZ.Reject.INVALID_GANG end
+    if cfgGangs().requireGang ~= false then return nil, RZ.Reject.NO_GANG end
+    return nil, RZ.Reject.SOLO
 end
 
 function Gangs.GetStableGangId(source)
@@ -456,13 +758,39 @@ function Gangs.GetStableGangId(source)
 end
 
 function Gangs.GetGangLabel(gangId)
-    local gang = RZ.Fw.GetGang(gangId)
+    if labelCache[gangId] then return labelCache[gangId] end
+    local gang = (not gangSource) and RZ.Fw.GetGang(gangId) or nil
     return (gang and gang.label) or gangId
 end
 
+-- True only for a player who plays as a Solo Squad: someone in a configured solo gang,
+-- or, with requireGang off, anyone with no gang at all.
 function Gangs.IsSolo(source)
-    return resolveGang(source) == nil
+    local _, reason = resolveGang(source)
+    return reason == RZ.Reject.SOLO
 end
+
+-- The RedZone exists for this player at all: in a real gang, or a solo player while Solo
+-- Squads are on. Everyone else neither sees the zone nor is let into it.
+function Gangs.IsAffiliated(source)
+    local gangId, reason = resolveGang(source)
+    if gangId then return true end
+    return reason == RZ.Reject.SOLO and Config.SoloSquads.enabled == true
+end
+
+AddEventHandler('onResourceStart', function(resource)
+    if resource == RZ.RESOURCE or gangSource == nil then return end
+    if looksLikeGangResource(resource) or resource == cfgGangs().resource then
+        SetTimeout(1000, function() Gangs.Detect() end)
+    end
+end)
+
+AddEventHandler('onResourceStop', function(resource)
+    if resource == RZ.RESOURCE then return end
+    if gangSource and gangSource.resource == resource then
+        SetTimeout(500, function() Gangs.Detect() end)
+    end
+end)
 
 function Gangs.IsValidGangMember(source)
     local gangId, reason = resolveGang(source)
@@ -485,6 +813,7 @@ function Gangs.RegisterUpdateHandlers(callback)
 end
 
 local function fireUpdate(source)
+    Gangs.Forget(source)
     for i = 1, #updateCallbacks do
         local ok, err = pcall(updateCallbacks[i], source)
         if not ok then
@@ -882,6 +1211,19 @@ end
 
 function Medical.MarkFullyDead(source)
     TriggerClientEvent(RZ.Event.KILL_LOCAL, source)
+end
+
+-- qb-ambulancejob keeps its laststand and death screen in client-local variables, so
+-- clearing the metadata alone leaves its timer running and it kills the player later. Its
+-- own revive event is the only thing that resets those, so it is fired before ours.
+function Medical.ReleaseClient(source)
+    if RZ.Fw.Flavour() ~= 'qb' then return end
+    TriggerClientEvent('hospital:client:Revive', source)
+end
+
+function Medical.ReclaimDowned(source)
+    setDeathState(source, DEATH_STATE.ALIVE)
+    Medical.ReleaseClient(source)
 end
 
 function Medical.Revive(source, coords, health)

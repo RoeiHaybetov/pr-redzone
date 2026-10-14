@@ -332,10 +332,17 @@ local function spansAt(poly, y, out)
     return out
 end
 
+-- Cuts a polygon into the axis-aligned rectangles an area blip can draw.
+--
+-- Between two consecutive vertex heights every edge is a straight line, so each span of
+-- that band is a trapezoid. One rectangle covers its full-height core and only the two
+-- slanted sides are stepped, in strips no wider than `detail`, so the border drawn on top
+-- hides the steps. Stacking full-width strips instead put a visible seam across the whole
+-- zone every few metres, which read on the map as a pile of horizontal lines.
 function Geo.PolygonBlipParts(poly, detail, maxParts)
     if type(poly) ~= 'table' or #poly < 3 then return {} end
-    detail = math.max(0.5, tonumber(detail) or 8.0)
-    maxParts = math.max(1, tonumber(maxParts) or 64)
+    detail = math.max(0.5, tonumber(detail) or 6.0)
+    maxParts = math.max(1, tonumber(maxParts) or 96)
 
     local rows, seen = {}, {}
     for i = 1, #poly do
@@ -345,41 +352,101 @@ function Geo.PolygonBlipParts(poly, detail, maxParts)
     table.sort(rows)
 
     local parts, lo, hi, sub = {}, {}, {}, {}
+
+    local function add(x0, x1, y0, y1)
+        if x1 - x0 > 0.05 and y1 - y0 > 0.05 then
+            parts[#parts + 1] = { x = (x0 + x1) * 0.5, y = (y0 + y1) * 0.5, w = x1 - x0, h = y1 - y0 }
+        end
+    end
+
+    -- One slanted side of a trapezoid: a right triangle between the edge (x = xa at y0 to
+    -- x = xb at y1) and the core rectangle's side at x = inner. It is stepped along its
+    -- shorter leg, which needs the fewest strips and leaves the shortest seams: a steep
+    -- edge gets horizontal strips, a shallow one vertical strips.
+    local function wing(xa, xb, inner, y0, y1, leftSide)
+        local slant = math.abs(xb - xa)
+        if slant <= 0.35 then return end
+        local h = y1 - y0
+
+        if slant <= h then
+            local steps = math.max(1, math.ceil(slant / detail))
+            for s = 0, steps - 1 do
+                local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
+                local edge = xa + (xb - xa) * (((a0 + a1) * 0.5 - y0) / h)
+                if leftSide then add(edge, inner, a0, a1) else add(inner, edge, a0, a1) end
+            end
+            return
+        end
+
+        -- The wing's solid side is the band edge (y0 or y1) where the slanted edge sits
+        -- furthest from the core; strips stand on it and reach to the slanted edge.
+        local outer = (math.abs(xa - inner) > math.abs(xb - inner)) and xa or xb
+        local baseIsTop = outer == xb
+        local steps = math.max(1, math.ceil(h / detail))
+        local lo, hi = math.min(outer, inner), math.max(outer, inner)
+        for s = 0, steps - 1 do
+            local c0, c1 = lo + (hi - lo) * s / steps, lo + (hi - lo) * (s + 1) / steps
+            local t = (((c0 + c1) * 0.5) - xa) / (xb - xa)
+            local edgeY = y0 + h * math.max(0, math.min(1, t))
+            if baseIsTop then add(c0, c1, edgeY, y1) else add(c0, c1, y0, edgeY) end
+        end
+    end
+
+    -- One trapezoid span: left side la -> lb and right side ra -> rb from y0 to y1. A span
+    -- that narrows to a point has no full-height core, so it is halved until each piece
+    -- does: the wide half gets a solid core, the pointed half is split again.
+    local function span(y0, y1, la, lb, ra, rb, depth)
+        local h = y1 - y0
+        local innerL, innerR = math.max(la, lb), math.min(ra, rb)
+        if innerR - innerL > 0.25 then
+            add(innerL, innerR, y0, y1)
+            wing(la, lb, innerL, y0, y1, true)
+            wing(ra, rb, innerR, y0, y1, false)
+            return
+        end
+        if h <= detail or depth >= 6 then
+            local steps = math.max(1, math.ceil(h / detail))
+            for s = 0, steps - 1 do
+                local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
+                local t = ((a0 + a1) * 0.5 - y0) / h
+                add(la + (lb - la) * t, ra + (rb - ra) * t, a0, a1)
+            end
+            return
+        end
+        local ym, lm, rm = (y0 + y1) * 0.5, (la + lb) * 0.5, (ra + rb) * 0.5
+        span(y0, ym, la, lm, ra, rm, depth + 1)
+        span(ym, y1, lm, lb, rm, rb, depth + 1)
+    end
+
     for _ = 1, 8 do
         parts = {}
         for k = 1, #rows - 1 do
             local y0, y1 = rows[k], rows[k + 1]
             local h = y1 - y0
             if h >= 0.25 then
-                local eps = math.min(h * 0.02, 0.05)
-                spansAt(poly, y0 + eps, lo)
-                spansAt(poly, y1 - eps, hi)
-                local flat = #lo == #hi
-                if flat then
+                -- No vertex lies strictly inside a band, so every edge is straight across
+                -- it: sample a quarter of the way in from each end, where no span has
+                -- pinched to nothing yet, and extend the edges out to the band's ends.
+                spansAt(poly, y0 + h * 0.25, lo)
+                spansAt(poly, y0 + h * 0.75, hi)
+                if #lo == #hi then
                     for i = 1, #lo do
-                        if math.abs(lo[i][1] - hi[i][1]) > 0.35 or math.abs(lo[i][2] - hi[i][2]) > 0.35 then
-                            flat = false
-                            break
-                        end
+                        local l1, l3, r1, r3 = lo[i][1], hi[i][1], lo[i][2], hi[i][2]
+                        local dl, dr = (l3 - l1) * 0.5, (r3 - r1) * 0.5
+                        span(y0, y1, l1 - dl, l3 + dl, r1 - dr, r3 + dr, 0)
                     end
-                end
-                local steps = flat and 1 or math.max(1, math.ceil(h / detail))
-                for s = 0, steps - 1 do
-                    local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
-                    spansAt(poly, (a0 + a1) * 0.5, sub)
-                    for i = 1, #sub do
-                        parts[#parts + 1] = {
-                            x = (sub[i][1] + sub[i][2]) * 0.5,
-                            y = (a0 + a1) * 0.5,
-                            w = sub[i][2] - sub[i][1],
-                            h = a1 - a0,
-                        }
+                else
+                    local steps = math.max(1, math.ceil(h / detail))
+                    for s = 0, steps - 1 do
+                        local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
+                        spansAt(poly, (a0 + a1) * 0.5, sub)
+                        for i = 1, #sub do add(sub[i][1], sub[i][2], a0, a1) end
                     end
                 end
             end
         end
         if #parts <= maxParts then break end
-        detail = detail * 1.75
+        detail = detail * 1.5
     end
 
     return parts

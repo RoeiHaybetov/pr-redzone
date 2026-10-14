@@ -12,6 +12,15 @@ local Store = RZ.Store
 
 local GRACE_MS = 2500
 
+-- How long after going down every incoming hit is absorbed, so one shotgun blast or burst
+-- cannot knock and finish a player in the same instant.
+local DOWNED_SHIELD_MS = 1000
+
+-- How long after going down a death-resource takeover (qb laststand starts ~1s late) is
+-- treated as the echo of the knock itself and reclaimed, rather than as a finishing blow.
+local TAKEOVER_GRACE_MS = 4000
+local RECLAIM_THROTTLE_MS = 1500
+
 local function lockName(prefix, id)
     return prefix .. tostring(id)
 end
@@ -26,8 +35,9 @@ local function reject(source, action, detail)
     return false
 end
 
-local function buildDownedPayload(remainingMs)
+local function buildDownedPayload(remainingMs, reassert)
     return {
+        reassert          = reassert == true,
         durationMs        = Config.Knock.durationMs,
         remainingMs       = remainingMs,
         crawl             = Config.Knock.crawl,
@@ -50,10 +60,18 @@ function Knock.EnterDowned(source, zoneId, cause)
     if not record.groupId then return false end
     if not Store.SetState(source, RZ.State.DOWNED, cause) then return false end
 
+    local now = RZ.Mono()
     record.knockRemainingMs = Config.Knock.durationMs
-    record.knockDeadline = RZ.Mono() + Config.Knock.durationMs
+    record.knockDeadline = now + Config.Knock.durationMs
+    record.downedAt = now
+    record.lastReclaimAt = nil
     record.reviverSrc = nil
-    RZ.Medical.EnterRedZoneDowned(source)
+    if RZ.Medical.IsDeadOrLastStand(source) then
+        record.medicalTookOver = true
+        RZ.Medical.ReclaimDowned(source)
+    else
+        RZ.Medical.EnterRedZoneDowned(source)
+    end
     TriggerClientEvent(RZ.Event.SET_DOWNED, source, true, buildDownedPayload(record.knockRemainingMs))
     Store.Publish(record)
     RZ.Log.Downed(source, zoneId)
@@ -110,6 +128,8 @@ end
 local function clearDownedPresentation(record)
     record.knockRemainingMs = nil
     record.knockDeadline = nil
+    record.downedAt = nil
+    record.lastReclaimAt = nil
     record.reviverSrc = nil
     TriggerClientEvent(RZ.Event.SET_DOWNED, record.src, false)
     Store.Publish(record)
@@ -127,6 +147,10 @@ function Knock.RestoreToAlive(source, health)
         return false
     end
 
+    if record.medicalTookOver then
+        record.medicalTookOver = nil
+        RZ.Medical.ReleaseClient(source)
+    end
     TriggerClientEvent(RZ.Event.RESTORE, source, { health = health })
     clearDownedPresentation(record)
     RZ.Medical.ExitRedZoneDowned(source)
@@ -145,6 +169,10 @@ function Knock.ReleaseForIneligibility(source, reason)
         clearDownedPresentation(record)
         RZ.Medical.ExitRedZoneDowned(source)
         RZ.Medical.ClearDeathState(source)
+        if record.medicalTookOver then
+            record.medicalTookOver = nil
+            RZ.Medical.ReleaseClient(source)
+        end
         TriggerClientEvent(RZ.Event.RESTORE, source, { health = Config.Revive.revivedHealth })
         Store.ForceState(source, RZ.State.OUTSIDE, 'released: ' .. reason)
     elseif record.state == RZ.State.BEING_REBOOTED then
@@ -186,48 +214,122 @@ function Knock.StopTimerLoop()
     loopRunning = false
 end
 
+local function finish(source, cause)
+    local ok, err = pcall(Elim.Eliminate, source, cause)
+    if not ok then
+        RZ.Log.Integration('knock', ('finish elimination failed for %s: %s'):format(source, tostring(err)))
+    end
+end
+
+local function inTakeoverGrace(record)
+    return record.downedAt ~= nil and (RZ.Mono() - record.downedAt) < TAKEOVER_GRACE_MS
+end
+
+-- The death resource grabbed a player the knock already owns: put the death state back to
+-- alive and have the client re-apply the downed presentation over whatever it was showing.
+local function reclaim(source, record)
+    local now = RZ.Mono()
+    if record.lastReclaimAt and (now - record.lastReclaimAt) < RECLAIM_THROTTLE_MS then return end
+    record.lastReclaimAt = now
+    record.medicalTookOver = true
+    RZ.Medical.ReclaimDowned(source)
+    TriggerClientEvent(RZ.Event.SET_DOWNED, source, true, buildDownedPayload(Knock.GetRemaining(source), true))
+end
+
 function Knock.ServerHealthWatch(source, record, zoneId)
     local ped = GetPlayerPed(source)
     if not ped or ped == 0 then return end
 
     local health = GetEntityHealth(ped)
     local deathStates = RZ.Medical.DEATH_STATE
+    local medicalState = RZ.Medical.GetDeathState(source)
+    local medicalDown = medicalState == deathStates.DEAD or medicalState == deathStates.LAST_STAND
 
     if record.state == RZ.State.ALIVE then
-        local medicalState = RZ.Medical.GetDeathState(source)
-        if medicalState == deathStates.DEAD then
-            RZ.Log.Suspicious(source, 'knock', 'reached qbx_medical DEAD while alive in zone — eliminating')
-            Store.SetState(source, RZ.State.ELIMINATED, 'bypassed knock')
-            Elim.RecordOnly(source, zoneId, 'bypassed knock')
+        -- Dying inside the zone is a knock, whichever way the death resource reports it.
+        -- Anything that reached the death state skipped the client's own report, so it is
+        -- caught here and handed to the knock instead of being lost to the death screen.
+        if medicalDown or health <= 0 then
+            Knock.EnterDowned(source, zoneId, 'server watchdog: died in zone')
             return
         end
         if inHealthGrace(record, health) then return end
-
-        if medicalState == deathStates.LAST_STAND or (health > 0 and health <= Config.Knock.lethalThreshold) then
+        if health <= Config.Knock.lethalThreshold then
             Knock.EnterDowned(source, zoneId, 'server health watchdog')
-        elseif health <= 0 then
-            Knock.EnterDowned(source, zoneId, 'server watchdog: lethal damage')
         end
         return
     end
 
     if record.state ~= RZ.State.DOWNED and record.state ~= RZ.State.BEING_REVIVED then return end
 
-    if not Config.Knock.immuneWhileDowned then
+    local down = medicalDown or health <= 0
+    local grace = inTakeoverGrace(record)
+
+    if not Config.Knock.immuneWhileDowned and not grace then
         local finished = health > 0 and health <= (Config.Knock.finishThreshold or 5)
-        if finished or health <= 0 or RZ.Medical.GetDeathState(source) == deathStates.DEAD then
-            local ok, err = pcall(Elim.Eliminate, source, 'finished while downed')
-            if not ok then
-                RZ.Log.Integration('knock', ('finish elimination failed for %s: %s'):format(source, tostring(err)))
-            end
+        if finished or down then
+            finish(source, 'finished while downed')
+            return
         end
+    end
+
+    if down then reclaim(source, record) end
+end
+
+-- Lethal weapon hits are stopped on the server before they land, so the ped never dies and
+-- no death resource ever sees the knock. Damage that does not go through a weapon event
+-- (falls, vehicles, explosions) still reaches the client report and the watchdog above.
+local function playerFromNetId(netId)
+    if type(netId) ~= 'number' or netId == 0 then return nil end
+    local entity = NetworkGetEntityFromNetworkId(netId)
+    if not entity or entity == 0 or not DoesEntityExist(entity) then return nil end
+    if GetEntityType(entity) ~= 1 or not IsPedAPlayer(entity) then return nil end
+    local owner = NetworkGetEntityOwner(entity)
+    if type(owner) ~= 'number' or owner <= 0 or GetPlayerPed(owner) ~= entity then return nil end
+    return owner, entity
+end
+
+AddEventHandler('weaponDamageEvent', function(sender, data)
+    if type(data) ~= 'table' then return end
+
+    local netId = data.hitGlobalId
+    if (not netId or netId == 0) and type(data.hitGlobalIds) == 'table' then netId = data.hitGlobalIds[1] end
+    local victim, ped = playerFromNetId(netId)
+    if not victim then return end
+
+    -- Who was in a fight and when: the combat-log check on disconnect reads these.
+    local now = RZ.Mono()
+    local attacker = type(sender) == 'number' and Store.Get(sender) or nil
+    if attacker and sender ~= victim then attacker.lastAttackAt = now end
+
+    local record = Store.Get(victim)
+    if not record then return end
+    if sender ~= victim then record.lastHitAt = now end
+    if not record.zoneId then return end
+
+    local state = record.state
+    if state == RZ.State.ALIVE then
+        if not record.groupId or not RZ.Schedule.IsOpen(record.zoneId) then return end
+        local damage = tonumber(data.weaponDamage) or 0
+        local remaining = GetEntityHealth(ped) + GetPedArmour(ped) - damage
+        if data.willKill ~= true and remaining > Config.Knock.lethalThreshold then return end
+        if Knock.EnterDowned(victim, record.zoneId, 'lethal hit') then CancelEvent() end
         return
     end
 
-    if RZ.Medical.IsDeadOrLastStand(source) then
-        RZ.Medical.EnterRedZoneDowned(source)
+    if state ~= RZ.State.DOWNED and state ~= RZ.State.BEING_REVIVED then return end
+
+    if Config.Knock.immuneWhileDowned
+        or (record.downedAt and (RZ.Mono() - record.downedAt) < DOWNED_SHIELD_MS) then
+        CancelEvent()
+        return
     end
-end
+
+    local damage = tonumber(data.weaponDamage) or 0
+    if data.willKill == true or (GetEntityHealth(ped) - damage) <= (Config.Knock.finishThreshold or 5) then
+        finish(victim, 'finished while downed')
+    end
+end)
 
 lib.callback.register(RZ.Callback.REQUEST_DOWNED, function(source)
     if not RZ.Guard(source, 'requestDowned') then return false end
@@ -239,9 +341,19 @@ lib.callback.register(RZ.Callback.REQUEST_DOWNED, function(source)
         return reject(source, 'requestDowned', 'claimed downed while outside the zone')
     end
 
+    -- The client reports the moment its own health drops; the server's copy of that health
+    -- arrives over the network a moment later. Give it a short window to catch up before
+    -- treating the report as a lie, rather than rejecting every honest knock.
     local health = RZ.Medical.GetHealth(source)
+    for _ = 1, 5 do
+        if health <= Config.Knock.lethalThreshold or RZ.Medical.IsDeadOrLastStand(source) then break end
+        Wait(150)
+        if record.state ~= RZ.State.ALIVE then return false end
+        health = RZ.Medical.GetHealth(source)
+    end
+
     if inHealthGrace(record, health) then return false end
-    if health > Config.Knock.lethalThreshold then
+    if health > Config.Knock.lethalThreshold and not RZ.Medical.IsDeadOrLastStand(source) then
         return reject(source, 'requestDowned',
             ('claimed lethal damage at health %d (threshold %d)'):format(health, Config.Knock.lethalThreshold))
     end
@@ -568,16 +680,6 @@ function Elim.CreateRecord(source, zoneId, cause)
     return deathId
 end
 
-function Elim.RecordOnly(source, zoneId, cause)
-    local deathId = Elim.CreateRecord(source, zoneId, cause)
-
-    local record = Store.Get(source)
-    if record then clearDownedPresentation(record) end
-
-    RZ.LootBag.SnapshotOnElimination(source, zoneId)
-    return deathId
-end
-
 function Elim.Eliminate(source, cause)
     local record = Store.Get(source)
     if not record then return end
@@ -591,10 +693,45 @@ function Elim.Eliminate(source, cause)
     if not Store.SetState(source, RZ.State.ELIMINATED, cause) then return end
 
     clearDownedPresentation(record)
+    record.medicalTookOver = nil
+    record.eliminatedAt = RZ.Mono()
+    record.elimSeenDead = false
+    record.elimKillResent = false
     Elim.CreateRecord(source, zoneId, cause)
     RZ.LootBag.SnapshotOnElimination(source, zoneId)
     RZ.Medical.MarkFullyDead(source)
     RZ.Notify(source, 'knock.eliminated', nil, 'error')
+end
+
+-- An eliminated player comes back one of three ways: a reboot (which moves them straight to
+-- ALIVE), the death resource's respawn hook, or anything else that brings the ped back —
+-- an EMS revive, /revive, a death script with no hook we know. The last case used to leave
+-- them ELIMINATED forever, so they could never be knocked again. This catches it.
+local KILL_RESEND_AFTER_MS, GIVE_UP_AFTER_MS = 6000, 15000
+
+function Elim.WatchEliminated(source, record)
+    local ped = GetPlayerPed(source)
+    if not ped or ped == 0 then return end
+
+    if GetEntityHealth(ped) <= 0 or RZ.Medical.IsDeadOrLastStand(source) then
+        record.elimSeenDead = true
+        return
+    end
+
+    if not record.elimSeenDead then
+        local since = RZ.Mono() - (record.eliminatedAt or 0)
+        if since < KILL_RESEND_AFTER_MS then return end
+        if not record.elimKillResent then
+            record.elimKillResent = true
+            RZ.Medical.MarkFullyDead(source)
+            return
+        end
+        if since < GIVE_UP_AFTER_MS then return end
+    end
+
+    if RZ.Cleanup and RZ.Cleanup.Respawned then
+        RZ.Cleanup.Respawned(source, 'alive again without a reboot')
+    end
 end
 
 function Elim.ForfeitOnRespawn(source, zoneId)

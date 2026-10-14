@@ -4,6 +4,7 @@ RZ.Client = {
     state = RZ.State.OUTSIDE,
     serverMonoOffset = 0,
     zonesOpen = {},
+    canSee = false,
     crateTimerAt = 0,
     downedPeers = {},
     eliminatedPeers = {},
@@ -77,10 +78,16 @@ end)
 
 RegisterNetEvent(RZ.Event.SYNC_WORLD, function(data)
     if type(data) ~= 'table' then return end
+    local zonesChanged = false
     if data.zones then
         C.zonesOpen = data.zones
-        TriggerEvent(RZ.Local.ZONES_CHANGED)
+        zonesChanged = true
     end
+    if data.canSee ~= nil and (data.canSee == true) ~= C.canSee then
+        C.canSee = data.canSee == true
+        zonesChanged = true
+    end
+    if zonesChanged then TriggerEvent(RZ.Local.ZONES_CHANGED) end
 
     if data.crate ~= nil then
         C.crate = data.crate ~= false and data.crate or nil
@@ -209,7 +216,7 @@ end)
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', C.RequestSync)
 AddEventHandler('playerSpawned', C.RequestSync)
 
-local revision = -1
+local revision, build = -1, -1
 
 function Sync.GetRevision() return revision end
 
@@ -297,10 +304,11 @@ end
 function Sync.Apply(payload)
     if type(payload) ~= 'table' then return end
     local incoming = tonumber(payload.revision) or 0
-    if incoming == revision then return end
+    local incomingBuild = tonumber(payload.build) or 0
+    if incoming == revision and incomingBuild == build then return end
 
     mergeIntoConfig(payload)
-    revision = incoming
+    revision, build = incoming, incomingBuild
 
     RZ.Entities.RemoveAll()
     Ui.Clear()

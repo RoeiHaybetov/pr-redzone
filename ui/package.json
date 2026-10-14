@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/barlow": "^5.1.0",
+    "@fontsource/rajdhani": "^5.1.0",
     "@pr/ui": "file:../../../../../pr-lib",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"

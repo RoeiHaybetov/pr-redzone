@@ -121,6 +121,14 @@ function Db.PruneExpiredCooldowns(nowMs)
     return affected(MySQL.query.await('DELETE FROM `redzone_cooldowns` WHERE `expires_at` <= ?', { nowMs }))
 end
 
+-- Death ids whose record is still PENDING (claimable from the corpse). Kept in memory so
+-- the peer sync, which runs every couple of seconds, never has to ask the database.
+local pendingDeaths = {}
+
+function Db.IsDeathPending(deathId)
+    return deathId ~= nil and pendingDeaths[deathId] == true
+end
+
 function Db.InsertDeath(row)
     local res = MySQL.query.await([[INSERT IGNORE INTO `redzone_deaths`
         (`death_id`, `citizenid`, `license`, `char_name`, `gang_id`, `zone_id`,
@@ -129,7 +137,9 @@ function Db.InsertDeath(row)
         row.death_id, row.citizenid, row.license, row.char_name, row.gang_id, row.zone_id,
         row.pos_x, row.pos_y, row.pos_z, RZ.DeathStatus.PENDING, row.created_at, row.expires_at
     })
-    return affected(res) > 0
+    local inserted = affected(res) > 0
+    if inserted then pendingDeaths[row.death_id] = true end
+    return inserted
 end
 
 function Db.GetDeath(deathId)
@@ -141,8 +151,10 @@ function Db.GetDeathBySerial(serial)
 end
 
 function Db.FetchPendingDeaths(zoneId)
-    return MySQL.query.await('SELECT * FROM `redzone_deaths` WHERE `zone_id` = ? AND `status` = ?',
+    local rows = MySQL.query.await('SELECT * FROM `redzone_deaths` WHERE `zone_id` = ? AND `status` = ?',
         { zoneId, RZ.DeathStatus.PENDING }) or {}
+    for i = 1, #rows do pendingDeaths[rows[i].death_id] = true end
+    return rows
 end
 
 local BY_STATUS = ' AND `status` = ?'
@@ -155,13 +167,17 @@ local function transitionDeath(sets, filter, params)
 end
 
 function Db.ClaimDeath(deathId, serial, acquirerCitizenId, nowMs)
-    return transitionDeath(', `item_serial` = ?, `acquired_by` = ?, `acquired_at` = ?', BY_STATUS,
+    local ok = transitionDeath(', `item_serial` = ?, `acquired_by` = ?, `acquired_at` = ?', BY_STATUS,
         { RZ.DeathStatus.ACQUIRED, serial, acquirerCitizenId, nowMs, deathId, RZ.DeathStatus.PENDING })
+    if ok then pendingDeaths[deathId] = nil end
+    return ok
 end
 
 function Db.ReleaseDeathClaim(deathId, serial)
-    return transitionDeath(', `item_serial` = NULL, `acquired_by` = NULL, `acquired_at` = NULL',
+    local ok = transitionDeath(', `item_serial` = NULL, `acquired_by` = NULL, `acquired_at` = NULL',
         BY_SERIAL_AND_STATUS, { RZ.DeathStatus.PENDING, deathId, serial, RZ.DeathStatus.ACQUIRED })
+    if ok then pendingDeaths[deathId] = true end
+    return ok
 end
 
 function Db.ConsumeDeathForReboot(deathId, serial, nowMs)
@@ -175,6 +191,7 @@ function Db.RestoreDeathAfterFailedReboot(deathId, serial)
 end
 
 function Db.ForfeitDeath(deathId)
+    pendingDeaths[deathId] = nil
     return transitionDeath('', BY_STATUS, { RZ.DeathStatus.EXPIRED, deathId, RZ.DeathStatus.PENDING })
 end
 
@@ -186,6 +203,7 @@ function Db.ExpirePendingDeaths(nowMs)
     if #rows > 0 then
         MySQL.query.await('UPDATE `redzone_deaths` SET `status` = ?' .. filter,
             { RZ.DeathStatus.EXPIRED, RZ.DeathStatus.PENDING, nowMs })
+        for i = 1, #rows do pendingDeaths[rows[i].death_id] = nil end
     end
 
     return rows

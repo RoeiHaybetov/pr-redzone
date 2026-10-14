@@ -38,7 +38,8 @@ end
 
 local function startMarker(zoneId)
     local zone = Config.Zones[zoneId]
-    if markerRunning or not zone or not zone.boundary or not zone.boundary.drawMarker then return end
+    if markerRunning or not RZ.Client.canSee then return end
+    if not zone or not zone.boundary or not zone.boundary.drawMarker then return end
     if type(zone.points) ~= 'table' or #zone.points < 3 then return end
     markerRunning = true
 
@@ -153,39 +154,52 @@ local function createZoneBlips(zoneId, zone)
     local handles = {}
     local z = zone.center.z + 0.0
 
-    if cfg.style == 'filled' then
-        local parts = RZ.Geo.PolygonBlipParts(zone.points, cfg.detail, cfg.maxParts)
-        for i = 1, #parts do
-            local part = parts[i]
-            local area = AddBlipForArea(part.x, part.y, z, part.w, part.h)
-            SetBlipColour(area, cfg.color)
-            SetBlipAlpha(area, cfg.alpha)
-            SetBlipAsShortRange(area, true)
-            handles[#handles + 1] = area
+    if cfg.style == 'circle' then
+        -- A clean disc instead of the traced shape: easier on the eye, but approximate. Its
+        -- radius reaches the furthest corner, so it never shows less ground than the zone.
+        local radius = AddBlipForRadius(zone.center.x, zone.center.y, z, (zone.radius or 50.0) + 0.0)
+        SetBlipColour(radius, cfg.color)
+        SetBlipAlpha(radius, cfg.alpha)
+        SetBlipAsShortRange(radius, true)
+        handles[#handles + 1] = radius
+    else
+        if cfg.style == 'filled' then
+            local parts = RZ.Geo.PolygonBlipParts(zone.points, cfg.detail, cfg.maxParts)
+            for i = 1, #parts do
+                local part = parts[i]
+                local area = AddBlipForArea(part.x, part.y, z, part.w, part.h)
+                SetBlipColour(area, cfg.color)
+                SetBlipAlpha(area, cfg.alpha)
+                SetBlipAsShortRange(area, true)
+                handles[#handles + 1] = area
+            end
         end
-    end
 
-    local edgeAlpha = math.min(255, cfg.alpha + 90)
-    local width = cfg.outlineWidth + 0.0
-    local pts = zone.points
-    local n = #pts
-    local j = n
+        -- The border is near-opaque so where two edges overlap at a corner it does not show
+        -- as a darker blot, and each edge runs half its width past both ends so corners close
+        -- instead of leaving a notch between two separate lines.
+        local edgeAlpha = math.min(255, cfg.alpha + 150)
+        local width = cfg.outlineWidth + 0.0
+        local pts = zone.points
+        local n = #pts
+        local j = n
 
-    for i = 1, n do
-        local a, b = pts[j], pts[i]
-        local dx, dy = b.x - a.x, b.y - a.y
-        local length = math.sqrt(dx * dx + dy * dy)
-        if length > 0.01 then
-            local heading = GetHeadingFromVector_2d(dx, dy)
-            local edge = AddBlipForArea((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, z, width, length)
-            SetBlipRotation(edge, math.floor(heading + 0.5))
-            pcall(SetBlipSquaredRotation, edge, heading + 0.0)
-            SetBlipColour(edge, cfg.color)
-            SetBlipAlpha(edge, edgeAlpha)
-            SetBlipAsShortRange(edge, true)
-            handles[#handles + 1] = edge
+        for i = 1, n do
+            local a, b = pts[j], pts[i]
+            local dx, dy = b.x - a.x, b.y - a.y
+            local length = math.sqrt(dx * dx + dy * dy)
+            if length > 0.01 then
+                local heading = GetHeadingFromVector_2d(dx, dy)
+                local edge = AddBlipForArea((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, z, width, length + width)
+                SetBlipRotation(edge, math.floor(heading + 0.5))
+                pcall(SetBlipSquaredRotation, edge, heading + 0.0)
+                SetBlipColour(edge, cfg.color)
+                SetBlipAlpha(edge, edgeAlpha)
+                SetBlipAsShortRange(edge, true)
+                handles[#handles + 1] = edge
+            end
+            j = i
         end
-        j = i
     end
 
     local center = AddBlipForCoord(zone.center.x, zone.center.y, z)
@@ -201,9 +215,13 @@ local function createZoneBlips(zoneId, zone)
 end
 
 function Blips.Refresh()
+    local canSee = RZ.Client.canSee == true
+    for zoneId in pairs(zoneBlips) do
+        if not Config.Zones[zoneId] then removeZoneBlips(zoneId) end
+    end
     for zoneId, zone in pairs(Config.Zones) do
         local cfg = zone.blip
-        local show = zone.enabled and cfg.enabled
+        local show = canSee and zone.enabled and cfg.enabled
             and (RZ.Client.zonesOpen[zoneId] == true or cfg.showWhenClosed)
 
         if show then

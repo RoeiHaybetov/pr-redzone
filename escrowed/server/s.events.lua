@@ -195,7 +195,8 @@ register(RZ.AdminCallback.GET_CONFIG, 'adminRead', nil, function()
         sections = RZ.AdminSchema.sections,
         fields = out,
         zones = zoneIds,
-        zoneStructure = S.ToJson(Config.Zones),
+        zoneStructure = S.ToJson(RZ.AdminStore.PendingZones()),
+        queued = RZ.AdminApply.GetDeferred() ~= nil,
         webhookConfigured = (webhook ~= nil and webhook ~= ''),
         suggestions = {
             jobTypes = RZ.AdminControls.JobTypes(),
@@ -317,10 +318,25 @@ register(RZ.AdminCallback.SET_WEBHOOK, 'adminPublish', 'error', function(source,
         end
     end
 
-    local flat, zones = RZ.AdminStore.CurrentFlat()
-    flat['Logging.webhook'] = clearing and '' or url
+    local value = clearing and '' or url
+    local flat, zones, queued = RZ.AdminStore.PendingState()
+    flat['Logging.webhook'] = value
 
-    local committed, revision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name)
+    -- The webhook goes live now even while a zone change waits for the next session, so the
+    -- saved state carries both and only the webhook half is applied to the running config.
+    local apply = true
+    if queued then
+        local liveFlat, liveZones = RZ.AdminStore.CurrentFlat()
+        liveFlat = S.Copy(liveFlat)
+        liveFlat['Logging.webhook'] = value
+        apply = { flat = liveFlat, zones = liveZones and S.Copy(liveZones) or nil }
+    end
+
+    local committed, revision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name, apply)
+    if committed and queued then
+        queued.flat = flat
+        queued.revision = revision
+    end
     if not committed then
         RZ.AdminAudit.Write(session, 'webhook', nil, nil, false, 'save failed')
         return { ok = false, error = 'Could not save the webhook.' }

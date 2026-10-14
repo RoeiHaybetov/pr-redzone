@@ -138,6 +138,15 @@ push(A.fields, 'economy', 'Seller payout', {
     { path = 'Rewards.keycardAmount', label = 'Keycard amount', type = 'int', min = 1, max = 100, step = 1, apply = 'live' },
 })
 
+push(A.fields, 'players', 'Gang access', {
+    { path = 'Gangs.requireGang', label = 'Gang members only', desc = 'On: a player with no gang cannot see the RedZone on the map and is pushed out of it. Off: no gang plays as Solo.',
+      type = 'bool', apply = 'live', confirm = true },
+    { path = 'Gangs.soloGangs', label = 'Solo gangs', desc = 'Members of these gangs fight as Solo Squads and are the only ones who can use /rzsquad. Name or label, any case.',
+      type = 'tags', maxItems = 16, maxLength = 48, apply = 'live' },
+    { path = 'Gangs.notGangs', label = 'Not a gang', desc = 'Gang (or, on ESX, job) names that count as no gang at all.',
+      type = 'tags', maxItems = 64, maxLength = 48, apply = 'live' },
+})
+
 push(A.fields, 'players', 'Solo squads', {
     { path = 'SoloSquads.enabled', label = 'Enabled', type = 'bool', apply = 'session', confirm = true },
     { path = 'SoloSquads.requireSquadForEntry', label = 'Require squad for entry', type = 'bool', apply = 'session' },
@@ -246,15 +255,15 @@ push(A.zoneTemplate, 'zones', 'Seller', {
 push(A.zoneTemplate, 'zones', 'Map blip', {
     { suffix = 'blip.enabled', label = 'Blip enabled', type = 'bool', apply = 'live' },
     { suffix = 'blip.showWhenClosed', label = 'Show while closed', type = 'bool', apply = 'live' },
-    { suffix = 'blip.style', label = 'Blip style', desc = 'Filled shades the whole area. Outline draws the border only.', type = 'select', options = { 'filled', 'outline' }, apply = 'live' },
+    { suffix = 'blip.style', label = 'Blip style', desc = 'Filled shades the traced shape with a border. Outline draws the border only. Circle is a clean disc reaching the furthest corner: tidier, but not the exact shape.', type = 'select', options = { 'filled', 'outline', 'circle' }, apply = 'live' },
     { suffix = 'blip.color', label = 'Blip colour', type = 'int', min = 0, max = 85, step = 1, apply = 'live' },
     { suffix = 'blip.alpha', label = 'Blip alpha', type = 'int', min = 0, max = 255, step = 5, apply = 'live' },
     { suffix = 'blip.outlineWidth', label = 'Outline width', desc = 'Thickness of the border traced along each edge of the zone.',
       type = 'number', min = 1.0, max = 25.0, step = 0.5, unit = 'm', apply = 'live', advanced = true },
-    { suffix = 'blip.detail', label = 'Fill detail', desc = 'Metres per fill step. Lower is smoother and costs more blips. Edges running straight north to south stay exact at any value.',
+    { suffix = 'blip.detail', label = 'Fill detail', desc = 'Widest step allowed along a slanted edge, in metres. Keep it near the outline width so the border hides the steps. The inside of the zone is always one solid piece.',
       type = 'number', min = 2.0, max = 40.0, step = 0.5, unit = 'm', apply = 'live', advanced = true },
     { suffix = 'blip.maxParts', label = 'Fill blip budget', desc = 'Ceiling on the blips one zone fill may use. The step coarsens until the shape fits.',
-      type = 'int', min = 8, max = 128, step = 1, apply = 'live', advanced = true },
+      type = 'int', min = 8, max = 200, step = 1, apply = 'live', advanced = true },
     { suffix = 'blip.centerSprite', label = 'Centre sprite', type = 'int', min = 1, max = 826, step = 1, apply = 'live', advanced = true },
     { suffix = 'blip.centerColor', label = 'Centre colour', type = 'int', min = 0, max = 85, step = 1, apply = 'live', advanced = true },
     { suffix = 'blip.centerScale', label = 'Centre scale', type = 'number', min = 0.1, max = 3.0, step = 0.05, apply = 'live', advanced = true },

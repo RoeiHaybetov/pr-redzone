@@ -97,6 +97,33 @@ function Access.HasBlockedJob(source)
     return false
 end
 
+local VISIBILITY_RECHECK_MS = 3000
+
+-- Whether the RedZone exists for this player at all. Regular citizens with no gang never
+-- see it on the map; they are pushed out like anyone else who is not allowed in.
+-- Whitelisted RedZone admins always see it, so they can find the zones they manage.
+function Access.CanSee(source)
+    if RZ.AdminAuth and RZ.AdminAuth.Check and RZ.AdminAuth.Check(source) then return true end
+    if Access.HasBlockedJob(source) then return false end
+    return RZ.Gangs.IsAffiliated(source) == true
+end
+
+function Access.RefreshVisibility(source, force)
+    local record = Store.Get(source)
+    if not record then return end
+
+    local now = RZ.Mono()
+    if not force and (now - (record.visibilityCheckedAt or 0)) < VISIBILITY_RECHECK_MS then return end
+    record.visibilityCheckedAt = now
+
+    local ok, canSee = pcall(Access.CanSee, source)
+    canSee = ok and canSee == true
+    if record.canSee == canSee then return end
+
+    record.canSee = canSee
+    TriggerClientEvent(RZ.Event.SYNC_WORLD, source, { canSee = canSee })
+end
+
 function Access.CheckEligibility(source, zoneId)
     if not enabledZone(zoneId) then return false, RZ.Reject.ZONE_CLOSED end
     if not RZ.Schedule.IsOpen(zoneId) then return false, RZ.Reject.ZONE_CLOSED end
@@ -338,12 +365,22 @@ function Access.ApplyCooldownBurn(source, record, zoneId, remainingMs)
     end
 end
 
+local function pedAlive(source)
+    local ped = GetPlayerPed(source)
+    if not ped or ped == 0 or GetEntityHealth(ped) <= 0 then return false end
+    return not RZ.Medical.IsDeadOrLastStand(source)
+end
+
 function Access.Evaluate(source)
     local record = Store.Get(source)
     if not record then return end
 
     local coords = coordsOf(source)
     if not coords then return end
+
+    if record.state == RZ.State.ELIMINATED then
+        RZ.Elimination.WatchEliminated(source, record)
+    end
 
     local zoneId = Access.ResolveZone(coords)
     if zoneId then
@@ -354,11 +391,23 @@ function Access.Evaluate(source)
         record.lastOutsideCoords = coords
         record.ejectCount = 0
         clearBurn(record)
+
+        -- A downed player who crawls over the line, or a corpse that ragdolls across it, is
+        -- still in that zone's fight: keep the zone so the bleed-out, revive, DNA and reboot
+        -- all still resolve. Dropping it here used to strand them downed forever.
+        if IN_FLOW[record.state] then
+            if record.zoneId then RZ.Knock.ServerHealthWatch(source, record, record.zoneId) end
+            return
+        end
+
         record.gangId = nil
         record.groupId = nil
         record.groupType = nil
-        if record.zoneId ~= nil then Store.SetZone(source, nil) end
-        if record.state == RZ.State.ALIVE then
+        if record.zoneId ~= nil then
+            Store.SetZone(source, nil)
+            RZ.Sync.PushWorld(source)
+        end
+        if record.state == RZ.State.ALIVE or record.state == RZ.State.RESPAWN_BLOCKED then
             Store.SetState(source, RZ.State.OUTSIDE, 'left zone')
         end
         return
@@ -369,7 +418,7 @@ function Access.Evaluate(source)
             RZ.Knock.ReleaseForIneligibility(source, RZ.Reject.ZONE_CLOSED)
         end
         if record.zoneId ~= nil then Store.SetZone(source, nil) end
-        if record.state == RZ.State.ALIVE then
+        if record.state == RZ.State.ALIVE or record.state == RZ.State.RESPAWN_BLOCKED then
             Store.SetState(source, RZ.State.OUTSIDE, 'zone closed')
         end
         record.groupId = nil
@@ -403,7 +452,10 @@ function Access.Evaluate(source)
     record.groupId = group and group.id or nil
     record.groupType = group and group.type or nil
 
-    if record.state == RZ.State.OUTSIDE then
+    -- Only a living ped joins the fight. A body carried or ragdolled in from outside stays a
+    -- spectator until it is alive, so death outside the zone can never become a free knock.
+    if (record.state == RZ.State.OUTSIDE or record.state == RZ.State.RESPAWN_BLOCKED)
+        and pedAlive(source) then
         Store.SetState(source, RZ.State.ALIVE, 'entered zone')
         RZ.Sync.PushWorld(source)
     end
@@ -439,6 +491,7 @@ local function tickPlayer(source)
         if not ok then
             RZ.Log.Integration('access', ('evaluate(%s) error: %s'):format(source, tostring(err)))
         end
+        Access.RefreshVisibility(source)
     end
 end
 

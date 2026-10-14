@@ -25,8 +25,11 @@ open it on a timer, and let gangs fight over a loot crate they have to hold grou
   drops as a real `ox_inventory` bag for whoever finds it.
 - **A lockout.** Dying and respawning locks you out of every zone for a while. Standing in
   one anyway burns your health rather than teleporting you around the boundary.
-- **Solo Squads.** Players with no gang form a squad and fight as one combat group. The
-  roster freezes once the first member walks in, so nobody swaps in fresh players mid-fight.
+- **Gang members only.** A regular citizen with no gang never sees the RedZone on the map and
+  is pushed out if they walk in. The gang system is found automatically at start-up.
+- **Solo Squads.** Players in the solo gang (`solo` by default) form a squad and fight as one
+  combat group. The roster freezes once the first member walks in, so nobody swaps in fresh
+  players mid-fight.
 - **Police are blocked**, by job type or exact name, checked before anything else.
 - **A live admin menu** — `/redzonemenu` — that edits every setting, draws new zones, and
   publishes without a restart.
@@ -49,6 +52,7 @@ resource you do not have can never stop this one from starting:
 | role | detected |
 |---|---|
 | framework | `qbx_core` · `qb-core` · ESX · standalone |
+| gangs | any gang resource with a player-gang export (rcore_gangs, brutal_gangs, op-crime…), else the framework's own gangs |
 | targeting | `ox_target` · `qb-target` |
 | death | `qbx_medical` · `qb-ambulancejob` |
 
@@ -164,18 +168,42 @@ Every revision is stored. **History & rollback** loads an old one back as a draf
 A zone is an ordered ring of at least 3 points plus a floor and a ceiling. Its centre and
 radius are derived from the shape on every load, so they can never drift away from it.
 
-**The map blip traces the polygon you drew.** Filled by default, with a crisp outline on
-every edge; set `blip.style = 'outline'` for edges only. `blip.detail` is metres per fill
-step — lower is smoother and costs more blips, and the fill is exact wherever an edge runs
-straight north–south. `blip.maxParts` caps how many blips one zone may use.
+**The map blip traces the polygon you drew.** Filled by default: the inside is one solid
+piece per band and only the slanted edges are stepped, under a crisp near-opaque border, so
+there are no stripes across the zone. `blip.style = 'outline'` draws the border only, and
+`'circle'` draws a tidy disc reaching the furthest corner (cleaner, not exact). `blip.detail`
+is the widest step allowed along a slanted edge; `blip.maxParts` caps how many blips one zone
+may use.
 
 **In debug, every zone is held open 24/7** and nothing else changes — the same eligibility,
 the same crate timer, the same lockouts.
 
-**Deleting a zone** evacuates anyone inside it, ends its session, and prunes its crate, loot
-bags and overrides. It takes effect when you publish, not when you press the button.
+**Deleting or adding a zone** applies the moment you publish: anyone inside a deleted zone is
+released, and its crate, loot bags, overrides and session end. Only **reshaping** an existing
+zone offers to wait for the next session, because it moves the ground under the players
+standing in it — and "Apply now" is always there too.
+
+**Who sees a zone.** Only players who can enter it — gang members, the solo gang while Solo
+Squads are on — and whitelisted RedZone admins see its blip. Everyone else is pushed out.
 
 ---
+
+## Gangs
+
+`Config.Gangs` in `configs/sh.config.lua` decides who the RedZone is for.
+
+- **`resource = 'auto'`** (default) — at every start the resource looks through the running
+  resources for a gang script that answers a player-gang export (`GetPlayerGang`,
+  `getPlayerOrganisation` and friends), calling it with the server id and then the citizen id.
+  The framework's own gangs (Qbox/QBCore `PlayerData.gang`, ESX `job2` then `job`) are always
+  the fallback. The console prints which source it picked, and Overview → Health checks shows
+  it too. Name a resource to force it, or `'framework'` to ignore gang scripts.
+- **`requireGang = true`** — no gang means regular citizen: no blip, pushed out on entry.
+- **`soloGangs = { 'solo' }`** — members of these gangs fight as Solo Squads and are the only
+  players who can open `/rzsquad`.
+- **`notGangs`** — names that count as no gang at all.
+
+All three access settings are also editable live under Players → Gang access.
 
 ## Commands
 
@@ -184,7 +212,7 @@ bags and overrides. It takes effect when you publish, not when you press the but
 | command | |
 |---|---|
 | `/cooldown` | how long your lockout has left (name configurable) |
-| `/rzsquad` | open the Solo Squad panel |
+| `/rzsquad` | open the Solo Squad panel (solo gang only) |
 
 **Administration** (Discord whitelist)
 
@@ -218,16 +246,25 @@ pr-redzone/
 └─ ui/               src/ + dist/ (Vite + React, built on @pr/ui)
 ```
 
-Rebuild the interface with `cd ui && npm install && npm run build`.
+Rebuild the interface with `cd ui && npm install && npm run build`. The UI uses the Rajdhani
+and Barlow fonts (`@fontsource/rajdhani`, `@fontsource/barlow`), bundled into `ui/dist`.
 
 ---
 
 ## How a few things work
 
-**The knock system never lets the ped die.** Health is pinned above zero the whole time you
-are down, so GTA never reaches its death state and the medical resource's last stand never
-takes over. That is why `downedHealth` and `lethalThreshold` both sit well above 0 — lower
-them to 0 and you hand control back to the death script.
+**The knock system never lets the ped die.** A weapon hit that would take a player inside an
+open zone to or below `lethalThreshold` is stopped on the server before it lands, and the
+player goes down instead — so GTA never reaches its death state and the medical resource's
+last stand never starts. Damage that is not a weapon hit (falls, vehicles, explosions) is
+caught by the client report and a server watchdog; if the death resource grabs the player
+anyway, the knock takes them back. The first second after going down absorbs every hit, so
+one burst cannot knock and finish in the same instant.
+
+**Eliminated players always come back clean.** Whether they respawn, get revived by EMS or an
+admin, or their death script has no respawn hook at all, the server notices the ped is alive
+again, applies the lockout, and returns them to normal — so they can be knocked again next
+time.
 
 **The CPR minigame is scored server-side.** The client reports which beats it hit; the server
 computes how many beats there should have been from its own clock and refuses an inflated

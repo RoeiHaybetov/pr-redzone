@@ -35,9 +35,32 @@ Config.Debug = false
 --- Grant with:  add_ace group.admin pr_redzone.admin allow
 Config.AdminAce = 'pr_redzone.admin'
 
---- ESX only: ESX has no gangs, so a job IS the gang. Jobs listed here are not gangs and
---- their holders count as Solo. Ignored on Qbox/QBCore/standalone.
-Config.Gangs = { notGangs = { 'unemployed' } }
+--- Who the RedZone is for, and where their gang is read from.
+Config.Gangs = {
+    --- 'auto' finds your gang system by itself every time the resource starts: it looks
+    --- through the running resources for a gang script that answers a player-gang export
+    --- (rcore_gangs, brutal_gangs, op-crime and the like) and reads gangs from it. The
+    --- framework's own gangs (Qbox/QBCore PlayerData.gang, ESX job2 then job) are always
+    --- the fallback. The console says at start-up which one it picked.
+    --- Put a resource name here to force it, or 'framework' to ignore gang scripts.
+    resource = 'auto',
+
+    --- Only for a forced resource whose export the auto-probe does not recognise, e.g.
+    --- 'GetPlayerGang'. It is called with the player's server id, then their citizen id.
+    export = nil,
+
+    --- true: a player with no gang is a regular citizen. The RedZone is hidden from their
+    --- map and they are pushed out if they walk in. false: no gang plays as Solo, as before.
+    requireGang = true,
+
+    --- Players in these gangs fight as Solo Squads, and they are the only ones who can open
+    --- /rzsquad. Matched against the gang's name or label, ignoring case.
+    soloGangs = { 'solo' },
+
+    --- These count as having no gang at all. On ESX (no gangs, so a job is the gang) list
+    --- every job that is not a gang here.
+    notGangs = { 'none', 'unemployed', 'unemployed2' },
+}
 
 --- Real-time configuration menu. ACCESS IS BY DISCORD ID ONLY — not ace, not god, not a
 --- job. The server reads the real `discord:` identifier, so a client is never asked who it
@@ -301,10 +324,13 @@ Config.Zones = {
         minZ = -53.0,
         maxZ = 547.0,
 
-        --- The map blip traces the polygon you drew — no circle, no approximation.
-        ---   style   'filled' shades the whole area, 'outline' draws the edges only.
-        ---   detail  metres per fill step. Lower is smoother and costs more blips; the shape
-        ---           is always exact wherever an edge runs straight north-south.
+        --- The map blip traces the polygon you drew. Only players who can enter (gang
+        --- members, the solo gang) and RedZone admins see it.
+        ---   style   'filled' shades the shape with a crisp border, 'outline' draws the border
+        ---           only, 'circle' is a tidy disc reaching the furthest corner (not exact).
+        ---   detail  widest step along a slanted edge, in metres. The inside of the zone is
+        ---           always one solid piece; only the slanted borders are stepped, and the
+        ---           border line drawn over them hides the steps.
         blip = {
             style = 'filled',
             color = 1,   -- blip colour index; 1 is red

@@ -627,6 +627,8 @@
 .rz-dot.ok   { background: var(--primary); }
 .rz-dot.warn { background: var(--danger); opacity: 0.5; }
 .rz-dot.fail { background: var(--danger); }
+.rz-dot.warning { background: var(--danger); opacity: 0.5; }
+.rz-dot.error { background: var(--danger); }
 .rz-check-body strong { font-size: 12.5px; font-weight: 500; color: var(--text-white); }
 .rz-check-body p { margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--text-dim); }
 
@@ -833,3 +835,244 @@
   border-top: 1px solid var(--row-bd);
   background: var(--panel-fill, transparent);
 }
+
+/* ===== RedZone flat skin ====================================================
+   A flat graphite-and-red skin over the same layout: no grain, no glows, no
+   glass. Solid surfaces, a red header band, solid red selection, condensed
+   Rajdhani for headings, labels and timers, Barlow for body text.
+   Nothing here changes a size, gap, padding or position. */
+:root {
+  --accent-rgb: 230, 36, 41;
+  --accent-2-rgb: 168, 16, 26;
+  --accent-3-rgb: 255, 92, 80;
+  --primary: rgb(var(--accent-rgb));
+  --primary-dim: #7a1f22;
+  --on-primary: #ffffff;
+  --accent-grad: linear-gradient(180deg, rgb(var(--accent-rgb)) 0%, rgb(var(--accent-2-rgb)) 100%);
+  --text-white: #f3f3f4;
+  --text-grey: rgba(243, 243, 244, 0.78);
+  --text-dim: rgba(243, 243, 244, 0.48);
+  --dark: #0d0e10;
+  --dark-mix: #141518;
+  --structure: rgba(255, 255, 255, 0.07);
+  --hairline: rgba(255, 255, 255, 0.06);
+  --bd: rgba(255, 255, 255, 0.1);
+  --bd-mid: rgba(var(--accent-rgb), 0.7);
+  --row-bd: transparent;
+  --row-bd-hover: transparent;
+  --row-fill: #1a1b1f;
+  --row-fill-hover: #202126;
+  --panel-fill: #111215;
+  --shell-fill: #0b0c0e;
+  --glass: #23242a;
+  --glass-hover: #2c2d34;
+  --glass-text: rgba(243, 243, 244, 0.72);
+  --glass-text-hover: #ffffff;
+  --chrome: rgb(var(--accent-rgb));
+  --chrome-glow: transparent;
+  --danger: #ff6b70;
+  --danger-fill: rgba(230, 36, 41, 0.14);
+  --danger-fill-hover: rgba(230, 36, 41, 0.26);
+  --danger-bd: rgba(230, 36, 41, 0.5);
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-xs: 0px;
+  --font: 'Barlow', 'Rajdhani', sans-serif;
+  --rz-display: 'Rajdhani', 'Barlow', sans-serif;
+  --rz-success: #3ddc84;
+  --rz-overlay-ring: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* --- flat surfaces: drop the glass, grain and glow ------------------------ */
+.pr-grain,
+.pr-lighting,
+.pr-shell-glow { display: none; }
+
+.pr-shell {
+  background: var(--shell-fill);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 30px 80px rgba(0, 0, 0, 0.7);
+}
+.pr-panel { background: var(--panel-fill); border-color: transparent; }
+.pr-divider { background: rgb(var(--accent-rgb)); }
+
+/* the header is a solid red band */
+.pr-header { background: var(--accent-grad); animation: none; }
+.pr-header .pr-brand-title { color: #fff; }
+.pr-header .pr-brand-subtitle { color: rgba(255, 255, 255, 0.82); }
+.pr-header .pr-btn { background: rgba(0, 0, 0, 0.28); color: #fff; }
+.pr-header .pr-btn:hover { background: rgba(0, 0, 0, 0.42); color: #fff; }
+.pr-header .pr-btn.is-primary { background: #fff; color: rgb(var(--accent-2-rgb)); }
+.pr-header .pr-btn.is-primary:hover { background: #ffe9e9; color: rgb(var(--accent-2-rgb)); }
+.pr-header .pr-btn:disabled,
+.pr-header .pr-btn:disabled:hover { background: rgba(0, 0, 0, 0.18); color: rgba(255, 255, 255, 0.45); }
+.pr-header .pr-close { background: rgba(0, 0, 0, 0.28); color: #fff; }
+.pr-header .pr-close-inner { border-color: rgba(255, 255, 255, 0.35); background: transparent; }
+
+/* sidebar: a darker column with solid red selection */
+.rz-admin-side { background: #0d0e10; border-right-color: transparent; }
+.pr-nav-item { background: transparent; border-color: transparent; animation: none; }
+.pr-nav-item:hover { background: #1a1b1f; border-color: transparent; }
+.pr-nav-item.is-active,
+.pr-nav-item.is-active:hover { background: rgb(var(--accent-rgb)); border-color: transparent; box-shadow: none; }
+.pr-nav-item.is-active .pr-nav-label { color: #fff; }
+.pr-nav-item .pr-nav-icon { background: transparent; border-color: transparent; color: var(--text-dim); }
+.pr-nav-item.is-active .pr-nav-icon { background: rgba(0, 0, 0, 0.22); border-color: transparent; color: #fff; }
+.pr-nav-bar { display: none; }
+.rz-admin-side-foot { border-top-color: var(--hairline); }
+
+/* cards and rows: solid fills, no outlines; a red edge marks what changed */
+.pr-section { background: #141518; border-color: transparent; }
+.pr-section-header { border-bottom-color: var(--hairline); }
+.pr-row,
+.rz-field,
+.rz-stat-box,
+.rz-diff-item,
+.rz-tag,
+.rz-wizard-step,
+.rz-wizard-facts > div,
+.rz-wizard-station { border-color: transparent; box-shadow: none; }
+.rz-field:hover { background: var(--row-fill-hover); }
+.rz-field.is-changed { box-shadow: inset 3px 0 0 rgb(var(--accent-rgb)); }
+.rz-admin-body .pr-row-body > .pr-section { background: #16171a; border-color: transparent; }
+.rz-wizard-step.is-active { background: rgb(var(--accent-rgb)); color: #fff; }
+
+/* controls */
+.pr-btn,
+.pr-pill,
+.pr-icon-btn,
+.pr-close { background: var(--glass); }
+.pr-btn.is-primary,
+.pr-pill.is-active { background: rgb(var(--accent-rgb)); color: #fff; }
+.pr-btn.is-primary:hover { background: #ff3a3f; color: #fff; box-shadow: none; }
+.pr-btn.is-danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger-bd); }
+.pr-btn.is-danger:hover { background: var(--danger-fill); color: #fff; }
+
+.pr-input,
+.pr-select { background: #0d0e10; border-color: transparent; box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.14); }
+.pr-input:focus { border-color: transparent; box-shadow: inset 0 -2px 0 rgb(var(--accent-rgb)); }
+
+.pr-switch { background: #0d0e10; border-color: rgba(255, 255, 255, 0.14); }
+.pr-switch,
+.pr-switch-knob { border-radius: 0; }
+.pr-switch.is-on { background: rgb(var(--accent-rgb)); border-color: transparent; }
+.pr-switch.is-on .pr-switch-knob { background: #fff; }
+
+.pr-badge { background: #23242a; border-color: transparent; color: var(--text-white); }
+.rz-chip { background: transparent; }
+.rz-chip.live { border-color: rgba(var(--accent-rgb), 0.6); color: #ff6b70; }
+
+.pr-dialog-card { background: #141518; border-color: transparent; box-shadow: inset 0 3px 0 rgb(var(--accent-rgb)), 0 0 0 1px rgba(255, 255, 255, 0.06), 0 30px 80px rgba(0, 0, 0, 0.7); }
+.pr-dialog-icon { background: rgba(var(--accent-rgb), 0.15); border-color: transparent; }
+
+.rz-scrollable::-webkit-scrollbar { width: 4px; height: 4px; }
+.rz-scrollable::-webkit-scrollbar-track { background: transparent; border-radius: 0; }
+.rz-scrollable::-webkit-scrollbar-thumb { background: #2c2d34; border-radius: 0; }
+.rz-scrollable::-webkit-scrollbar-thumb:hover { background: rgb(var(--accent-rgb)); }
+
+/* --- type ---------------------------------------------------------------- */
+.pr-brand-title,
+.pr-brand-subtitle,
+.pr-section-header h2,
+.rz-view-head h2,
+.pr-dialog-title,
+.pr-btn,
+.pr-pill,
+.pr-badge,
+.pr-stat,
+.pr-key,
+.pr-nav-label,
+.pr-navlist-label,
+.pr-select-value,
+.pr-select-option,
+.rz-chip,
+.rz-table th,
+.rz-stat-box > span,
+.rz-wizard-step,
+.rz-wizard-facts > div > span:first-child,
+.rz-wizard-station-head,
+.rz-crate-title,
+.rz-crate-status,
+.rz-crate-time,
+.rz-knock-time,
+.rz-knock-unit,
+.rz-knock-title,
+.rz-cpr-key,
+.rz-cpr-grade,
+.rz-cpr-title,
+.rz-toast-head,
+.rz-admin-rev,
+.rz-num { font-family: var(--rz-display); }
+
+.pr-brand-title { font-size: 26px; font-weight: 700; letter-spacing: 4px; }
+.pr-brand-subtitle { font-size: 12px; font-weight: 600; letter-spacing: 3px; text-transform: uppercase; }
+.pr-section-header h2,
+.rz-view-head h2 { font-size: 18px; font-weight: 700; letter-spacing: 2px; }
+.rz-admin-body .pr-row-body > .pr-section > .pr-section-header h2 { font-size: 15px; letter-spacing: 1.6px; }
+.pr-section-header h2 i { color: rgb(var(--accent-rgb)); }
+.pr-dialog-title { font-size: 20px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.pr-btn,
+.pr-pill { font-size: 13.5px; font-weight: 700; letter-spacing: 1.4px; }
+.pr-badge { font-size: 12.5px; font-weight: 700; letter-spacing: 1.2px; }
+.pr-stat { font-size: 12px; font-weight: 600; letter-spacing: 1px; }
+.pr-key { font-size: 12px; }
+.pr-nav-label { font-size: 16px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; }
+.pr-navlist-label { font-size: 12px; letter-spacing: 2px; }
+.pr-select-value,
+.pr-select-option { font-size: 14px; letter-spacing: 0.4px; }
+.rz-field-label label { font-size: 14.5px; font-weight: 600; }
+.rz-field-desc,
+.rz-view-head span,
+.rz-check-body p,
+.rz-wizard-lede { font-size: 12.5px; }
+.rz-chip { font-size: 11px; letter-spacing: 1.2px; }
+.rz-table th { font-size: 12px; letter-spacing: 1.2px; }
+.rz-stat-box > span:first-child { font-size: 11px; letter-spacing: 1.6px; }
+.rz-stat-box > span:last-child { font-size: 18px; font-weight: 700; }
+.rz-wizard-step { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; }
+.rz-admin-rev { font-size: 13px; letter-spacing: 0.8px; text-transform: uppercase; }
+
+.rz-crate-time,
+.rz-knock-time,
+.rz-num { font-variant-numeric: tabular-nums; }
+
+/* --- HUD ------------------------------------------------------------------ */
+.rz-crate,
+.rz-cpr-info,
+.rz-toast,
+.rz-admin-toast { background: #111215; border-color: transparent; border-radius: 0; }
+.rz-crate { box-shadow: inset 3px 0 0 rgb(var(--accent-rgb)), var(--rz-overlay-ring); }
+.rz-crate-bar { background: rgba(255, 255, 255, 0.06); }
+.rz-crate-bar span,
+.rz-toast-timer span { background: rgb(var(--accent-rgb)); }
+.rz-crate-title { font-size: calc(13px * var(--rz-scale, 1)); font-weight: 700; letter-spacing: 2.4px; }
+.rz-crate-status { font-size: calc(13px * var(--rz-scale, 1)); font-weight: 700; letter-spacing: 1.8px; }
+.rz-crate-time { font-size: calc(32px * var(--rz-scale, 1)); font-weight: 700; letter-spacing: 0.5px; }
+.rz-crate-title i,
+.rz-knock-title i,
+.rz-cpr-title i,
+.rz-toast-head i { color: rgb(var(--accent-rgb)); }
+
+.rz-ring circle { fill: #111215; stroke-width: 6; stroke-linecap: butt; }
+.rz-ring-track { stroke: rgba(255, 255, 255, 0.08); }
+.rz-ring-fill { stroke: rgb(var(--accent-rgb)); }
+.rz-knock-time { font-size: 46px; font-weight: 700; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8); }
+.rz-knock-unit { font-size: 11px; font-weight: 700; letter-spacing: 3px; }
+.rz-knock-title { font-size: 16px; font-weight: 700; letter-spacing: 4px; color: #ff4a4f; }
+.rz-knock-hint { font-size: 12.5px; }
+.rz-knock.is-critical .rz-knock-time { color: #ff4a4f; }
+.rz-cpr-key { font-size: 18px; font-weight: 700; letter-spacing: 4px; }
+.rz-cpr-grade { font-size: 14px; font-weight: 700; letter-spacing: 2.4px; }
+.rz-cpr-title,
+.rz-toast-head { font-size: 12.5px; font-weight: 700; letter-spacing: 2px; }
+
+/* good states are green, so they never read as a warning */
+.rz-dot.ok,
+.rz-dot-online.is-on { background: var(--rz-success); }
+.rz-cpr-grade.perfect,
+.rz-cpr-grade.good { color: var(--rz-success); }
+.rz-cpr-stage.hit .rz-cpr-target { stroke: var(--rz-success); }
+.rz-cpr-meter span.passing { background: var(--rz-success); }
+.rz-knock.is-paused .rz-ring-fill { stroke: var(--rz-success); }
+.rz-knock.is-paused .rz-knock-title { color: var(--rz-success); }

@@ -733,7 +733,15 @@ function Store.Load()
     RZ.Log.Integration('adminstore', 'CRITICAL: no usable stored configuration. Running on config.lua defaults.')
 end
 
-function Store.Commit(flat, zoneStructure, discordId, name)
+-- Saves flat/zoneStructure as the published revision. `apply` decides what goes live now:
+-- true applies exactly what was saved, a { flat, zones } table applies that instead (the
+-- live half of a change made while another is queued), and false keeps the running config
+-- untouched — the saved state then waits in AdminApply's queue for the next session.
+--
+-- Queuing used to apply the new state and immediately roll it back. Applying a deletion
+-- retires the zone (evacuates it, ends its session, prunes its crate), and the rollback
+-- then brought the zone straight back half-dismantled — the "delete did nothing" bug.
+function Store.Commit(flat, zoneStructure, discordId, name, apply)
     local newRevision = revision + 1
     local blob = Store.EncodeOverrides(flat, zoneStructure)
     if not RZ.Db.SaveRuntimeConfig(RZ.AdminSchema.SCHEMA_VERSION, newRevision, blob, discordId, name) then
@@ -741,8 +749,38 @@ function Store.Commit(flat, zoneStructure, discordId, name)
     end
     revision = newRevision
     degraded = false
-    applyOverrideSet(flat, zoneStructure)
+    if apply == true then
+        applyOverrideSet(flat, zoneStructure)
+    elseif type(apply) == 'table' then
+        applyOverrideSet(apply.flat, apply.zones)
+    end
     return true, newRevision
+end
+
+-- The state the next commit builds on: whatever is queued for the next session if anything
+-- is, otherwise what is live. Building on the live state while something was queued meant
+-- the next publish silently threw the queued change away.
+function Store.PendingState()
+    local queued = Apply.GetDeferred()
+    if queued then
+        return S.Copy(queued.flat), queued.zones and S.Copy(queued.zones) or nil, queued
+    end
+    local flat, zones = Store.CurrentFlat()
+    return S.Copy(flat), zones and S.Copy(zones) or nil, nil
+end
+
+-- Zones as the editor should see them: the queued shapes when a reshape is waiting, with
+-- the same derived fields (centre, radius, bounds) the live config carries.
+function Store.PendingZones()
+    local queued = Apply.GetDeferred()
+    if not queued or not queued.zones then return Config.Zones end
+    local out = {}
+    for zoneId, zone in pairs(queued.zones) do
+        local copy = S.Copy(zone)
+        if RZ.Defaults and RZ.Defaults.ApplyZone then RZ.Defaults.ApplyZone(copy) end
+        out[zoneId] = copy
+    end
+    return out
 end
 
 local APPLY_LOCK = 'admin:apply'
@@ -756,10 +794,30 @@ function Apply.Unlock(owner) RZ.Lock.Release(APPLY_LOCK, owner) end
 
 function Apply.IsLocked() return RZ.Lock.IsHeld(APPLY_LOCK) end
 
-function Apply.ModeFor(paths)
+-- Compares two zone structures. Only a reshape of a zone that already exists moves the
+-- ground under the players standing in it; adding or deleting a zone never has to wait.
+function Apply.ClassifyZones(before, after)
+    local change = { added = 0, removed = 0, reshaped = 0 }
+    before, after = before or {}, after or {}
+    for zoneId, zone in pairs(after) do
+        local old = before[zoneId]
+        if not old then
+            change.added = change.added + 1
+        elseif not S.Equal(old.points, zone.points)
+            or not S.Equal(old.minZ, zone.minZ) or not S.Equal(old.maxZ, zone.maxZ) then
+            change.reshaped = change.reshaped + 1
+        end
+    end
+    for zoneId in pairs(before) do
+        if after[zoneId] == nil then change.removed = change.removed + 1 end
+    end
+    return change
+end
+
+function Apply.ModeFor(paths, zoneChange)
     local mode = 'live'
     for i = 1, #paths do
-        if paths[i] == 'Zones' then mode = 'session' end
+        if paths[i] == 'Zones' and (not zoneChange or zoneChange.reshaped > 0) then mode = 'session' end
         local field = RZ.AdminSchema.GetField(paths[i])
         local fieldMode = field and field.apply or 'live'
         if fieldMode == 'restart' then
@@ -804,9 +862,13 @@ function Apply.Rebuild(changedPaths)
         for zoneId in pairs(Config.Zones) do knownZones[zoneId] = true end
 
         RZ.AdminSync.BroadcastConfig()
+        RZ.Gangs.Forget()
 
         for source in pairs(RZ.Store.All()) do
-            if online(source) then pcall(RZ.Access.Evaluate, source) end
+            if online(source) then
+                pcall(RZ.Access.Evaluate, source)
+                pcall(RZ.Access.RefreshVisibility, source, true)
+            end
         end
 
         RZ.Sync.PushWorldAll()
@@ -815,6 +877,28 @@ function Apply.Rebuild(changedPaths)
     if not ok then return false, tostring(err) end
     return true
 end
+
+-- Remembers which zones exist, so the first structural publish after a start only resets
+-- the crates of zones it actually added instead of every crate on the server.
+function Apply.PrimeKnownZones()
+    knownZones = {}
+    for zoneId in pairs(Config.Zones or {}) do knownZones[zoneId] = true end
+end
+
+local function mergePaths(a, b)
+    local seen, out = {}, {}
+    for _, list in ipairs({ a or {}, b or {} }) do
+        for i = 1, #list do
+            if not seen[list[i]] then
+                seen[list[i]] = true
+                out[#out + 1] = list[i]
+            end
+        end
+    end
+    return out
+end
+
+Apply.MergePaths = mergePaths
 
 function Apply.Defer(payload)
     deferred = payload
@@ -884,6 +968,11 @@ function Apply.PruneZone(zoneId) zoneOverrides[zoneId] = nil end
 local cached
 local cachedRevision = -1
 
+-- Bumped on every rebuild. Clients compare it, not the revision: a change queued for the
+-- next session bumps the revision while the live config stays the same, and a client that
+-- synced in that window would otherwise ignore the real change when the queue flushed.
+local build = 0
+
 function Sync.Build()
     local zones = {}
 
@@ -927,8 +1016,11 @@ function Sync.Build()
         end
     end
 
+    build = build + 1
+
     return {
         revision = RZ.AdminStore.GetRevision(),
+        build = build,
         Zones = zones,
         Knock = {
             crawl = Config.Knock.crawl, crawlClipsets = Config.Knock.crawlClipsets,
@@ -1013,7 +1105,7 @@ function P.ValidateDraft(draft)
 
     if type(draft) ~= 'table' then return fail(result, 'Malformed draft.') end
 
-    local zones = Config.Zones
+    local zones = RZ.AdminStore.PendingZones()
     if draft.zones ~= nil then
         if type(draft.zones) ~= 'table' then return fail(result, 'Malformed zone data.') end
         zones = S.FromJson(draft.zones)
@@ -1022,7 +1114,7 @@ function P.ValidateDraft(draft)
         RZ.AdminSchema.Reindex(probe)
     end
 
-    local flat = S.Copy(RZ.AdminStore.CurrentFlat())
+    local flat = RZ.AdminStore.PendingState()
 
     for path, jsonValue in pairs(draft.fields or {}) do
         local field = RZ.AdminSchema.GetField(path)
@@ -1053,9 +1145,14 @@ function P.ValidateDraft(draft)
             changed[#changed + 1] = path
         end
     end
-    if zones and not S.Equal(Config.Zones, zones) then changed[#changed + 1] = 'Zones' end
+    local zoneChange = nil
+    if draft.zones ~= nil and not S.Equal(Config.Zones, zones) then
+        changed[#changed + 1] = 'Zones'
+        zoneChange = RZ.AdminApply.ClassifyZones(Config.Zones, zones)
+    end
     table.sort(changed)
     result.changed = changed
+    result.zoneChange = zoneChange
 
     local errors, warnings = RZ.AdminValidate.Cross(candidate)
     table.move(errors, 1, #errors, #result.errors + 1, result.errors)
@@ -1065,7 +1162,20 @@ function P.ValidateDraft(draft)
     table.move(itemErrors, 1, #itemErrors, #result.errors + 1, result.errors)
 
     result.diff = P.BuildDiff(candidate, changed)
-    result.applyMode = RZ.AdminApply.ModeFor(changed)
+    if zoneChange then
+        local function add(count, what)
+            if count > 0 then
+                result.diff[#result.diff + 1] = {
+                    path = 'Zones', label = ('%d zone(s) %s'):format(count, what),
+                    before = '', after = what, apply = (what == 'reshaped') and 'session' or 'live',
+                }
+            end
+        end
+        add(zoneChange.added, 'added')
+        add(zoneChange.removed, 'deleted')
+        add(zoneChange.reshaped, 'reshaped')
+    end
+    result.applyMode = RZ.AdminApply.ModeFor(changed, zoneChange)
     result.ok = #result.errors == 0
 
     RZ.AdminSchema.Reindex(Config)
@@ -1130,9 +1240,9 @@ function P.Publish(session, draft, opts)
     previousFlat = S.Copy(previousFlat)
     previousZones = previousZones and S.Copy(previousZones) or nil
 
-    local flat = S.Copy(previousFlat)
+    local flat, baseZones, queued = RZ.AdminStore.PendingState()
     for path, jsonValue in pairs(draft.fields or {}) do flat[path] = S.FromJson(jsonValue) end
-    local zones = draft.zones and S.FromJson(draft.zones) or previousZones
+    local zones = draft.zones and S.FromJson(draft.zones) or baseZones
 
     if zones and RZ.Defaults and RZ.Defaults.StripZone then
         local lean = {}
@@ -1141,35 +1251,42 @@ function P.Publish(session, draft, opts)
     end
 
     local mode = opts.applyMode or validation.applyMode
+    local changedPaths = RZ.AdminApply.MergePaths(queued and queued.changedPaths, validation.changed)
 
     if mode == 'session' and P.AnySessionLive() then
-        local ok, newRevision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name)
+        local ok, newRevision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name, false)
         if not ok then
             RZ.AdminApply.Unlock(owner)
             return fail(result, 'Could not save the configuration. Nothing was changed.')
         end
 
-        RZ.AdminStore.Rollback(previousFlat, previousZones)
-        RZ.AdminApply.Defer({
-            revision = newRevision, flat = flat, zones = zones, changedPaths = validation.changed,
-        })
+        RZ.AdminApply.Defer({ revision = newRevision, flat = flat, zones = zones, changedPaths = changedPaths })
         P.WriteHistory(session, newRevision, liveRevision, opts.reason, validation.diff, flat, zones)
         RZ.AdminApply.Unlock(owner)
+        RZ.AdminAudit.Write(session, 'publish', nil, ('%d field(s) queued for next session'):format(#validation.changed),
+            true, nil, newRevision)
 
         result.ok, result.revision, result.deferred, result.diff = true, newRevision, true, validation.diff
         return result
     end
 
-    local ok, newRevision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name)
+    -- Applying now also applies anything that was waiting for the next session: it is
+    -- already part of what is being saved, and leaving it queued would let the session end
+    -- re-apply an older state on top of this one.
+    if queued then RZ.AdminApply.ClearDeferred() end
+
+    local ok, newRevision = RZ.AdminStore.Commit(flat, zones, session.discordId, session.name, true)
     if not ok then
+        if queued then RZ.AdminApply.Defer(queued) end
         RZ.AdminApply.Unlock(owner)
         return fail(result, 'Could not save the configuration. Nothing was changed.')
     end
 
-    local applied, applyErr = RZ.AdminApply.Rebuild(validation.changed)
+    local applied, applyErr = RZ.AdminApply.Rebuild(changedPaths)
     if not applied then
         RZ.AdminStore.Rollback(previousFlat, previousZones)
-        pcall(RZ.AdminApply.Rebuild, validation.changed)
+        if queued then RZ.AdminApply.Defer(queued) end
+        pcall(RZ.AdminApply.Rebuild, changedPaths)
         RZ.AdminApply.Unlock(owner)
         RZ.Log.Integration('adminpublish', 'runtime apply failed, rolled back: ' .. tostring(applyErr))
         RZ.AdminAudit.Write(session, 'publish', nil, 'runtime apply failed', false, tostring(applyErr), newRevision)
@@ -1182,6 +1299,7 @@ function P.Publish(session, draft, opts)
 
     result.ok, result.revision = true, newRevision
     result.diff, result.applyMode = validation.diff, mode
+    result.flushedQueued = queued ~= nil
     return result
 end
 
@@ -1257,10 +1375,13 @@ function Diag.Run()
         add('Dependencies', 'Framework adapter', OK, ('RZ.Fw is using %s'):format(resolved))
     end
 
-    local pug = resourceStarted('pug-gangs')
-    add('Dependencies', 'pug-gangs', pug and WARN or NA,
-        pug and "present, but the gang adapter is still using the framework's gangs. Swap RZ.Gangs to its exports."
-            or 'not installed — gang data comes from the framework')
+    local gangText = RZ.Gangs.Describe()
+    add('Dependencies', 'Gang source', OK, ('auto-detected: %s'):format(gangText))
+    local soloGangs = Config.Gangs and Config.Gangs.soloGangs
+    add('Dependencies', 'Gang access', OK, (Config.Gangs and Config.Gangs.requireGang == false)
+        and 'players with no gang fight as Solo Squads'
+        or ('gang members only; solo gang: %s'):format(type(soloGangs) == 'table' and #soloGangs > 0
+            and table.concat(soloGangs, ', ') or 'none set'))
 
     local runtimeRow = RZ.Db.FetchRuntimeConfig()
     add('Database', 'Runtime config table', runtimeRow and OK or WARN,

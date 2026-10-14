@@ -46,7 +46,7 @@ const ZONE_SECTION = 'zones'
 
 const MODE_BODY = {
   restart: 'Some changes need a resource restart.',
-  session: 'Zones are being added, reshaped or removed. That can wait for the next RedZone session, or be applied now.',
+  session: 'A zone is being reshaped, which moves the ground under anyone standing in it. That can wait for the next RedZone session, or be applied now.',
   live: 'All changes can be applied immediately.',
 }
 
@@ -74,7 +74,9 @@ async function sendPublish(env, payload, applyMode, ackWarnings) {
   env.setRevision(res.revision)
   env.notify(res.deferred
     ? `Saved as revision ${res.revision}. It will apply when the current session ends.`
-    : `Published revision ${res.revision}.`)
+    : res.flushedQueued
+      ? `Published revision ${res.revision}, including the change that was queued for the next session.`
+      : `Published revision ${res.revision}.`)
 
   await env.reload()
   return null
@@ -95,7 +97,8 @@ async function reviewPublish(env, payload, count) {
   }
 
   const entries = (v.warnings || []).map((w) => ({ kind: 'warn', text: w }))
-  const mode = payload.zones && v.applyMode === 'live' ? 'session' : v.applyMode
+  // The server decides: adding or deleting a zone applies live, only a reshape can wait.
+  const mode = v.applyMode
   const buttons = []
 
   if (mode === 'session') {

@@ -23,6 +23,7 @@ local function onPlayerLoaded(source)
 
     SetTimeout(2000, function()
         if GetPlayerName(source) == nil then return end
+        RZ.Access.RefreshVisibility(source, true)
         RZ.Access.Evaluate(source)
         RZ.Squads.PushState(source)
         RZ.Sync.PushWorld(source)
@@ -71,6 +72,7 @@ function RZ.Cleanup.Player(source, reason)
 
     RZ.Lock.ReleaseAllOwnedBy(source)
     RZ.Rate.Clear(source)
+    RZ.Gangs.Forget(source)
     RZ.AdminSessions.Destroy(source)
     lastLoadHandled[source] = nil
     Store.Untrack(source)
@@ -110,6 +112,7 @@ function RZ.Sync.PushWorld(source)
         zones = zones,
         crate = crate or false,
         crateTimer = crateTimer,
+        canSee = record ~= nil and record.canSee == true,
     })
 end
 
@@ -128,18 +131,6 @@ function RZ.Sync.PushPeers()
 
     local byGroup = {}
 
-    local pendingByZone = {}
-    local function isClaimable(zoneId, deathId)
-        local pending = pendingByZone[zoneId]
-        if not pending then
-            pending = {}
-            local rows = RZ.Db.FetchPendingDeaths(zoneId) or {}
-            for i = 1, #rows do pending[rows[i].death_id] = true end
-            pendingByZone[zoneId] = pending
-        end
-        return pending[deathId] == true
-    end
-
     for source, record in pairs(Store.All()) do
         if record.zoneId and record.groupId then
             local bucket = byGroup[record.groupId]
@@ -151,7 +142,7 @@ function RZ.Sync.PushPeers()
             if record.state == RZ.State.DOWNED or record.state == RZ.State.BEING_REVIVED then
                 bucket.downed[tostring(source)] = true
             elseif record.state == RZ.State.ELIMINATED and record.deathId then
-                if isClaimable(record.zoneId, record.deathId) then
+                if RZ.Db.IsDeathPending(record.deathId) then
                     bucket.eliminated[tostring(source)] = record.deathId
                 end
             end
@@ -208,7 +199,11 @@ local function wireSchedule()
     end)
 
     RZ.Session.OnEnd(function(zoneId, endedSessionId)
-        RZ.Squads.ClearSnapshotsForSession(endedSessionId)
+        -- Session ids are dates, so two zones open the same night share one. Only drop the
+        -- squad roster locks once no zone is still running that night.
+        if not RZ.Session.IsLiveAnywhere(endedSessionId) then
+            RZ.Squads.ClearSnapshotsForSession(endedSessionId)
+        end
         RZ.Elimination.InvalidateSessionRecords(zoneId, endedSessionId)
         RZ.AdminApply.FlushDeferred()
     end)
@@ -224,6 +219,7 @@ local function wireGangUpdates()
         if source then
             if GetPlayerName(source) ~= nil then
                 RZ.Access.Evaluate(source)
+                RZ.Access.RefreshVisibility(source, true)
                 RZ.Squads.PushState(source)
             end
             return
@@ -232,42 +228,45 @@ local function wireGangUpdates()
         for src in pairs(Store.All()) do
             if GetPlayerName(src) ~= nil then
                 RZ.Access.Evaluate(src)
+                RZ.Access.RefreshVisibility(src, true)
             end
         end
     end)
 end
 
+function RZ.Cleanup.Respawned(source, via)
+    local record = Store.Get(source)
+    if not record or record.state ~= RZ.State.ELIMINATED then return end
+
+    local zoneId = record.eliminationZoneId or record.zoneId
+    if not zoneId then
+        Store.ForceState(source, RZ.State.OUTSIDE, 'respawned with no elimination zone')
+        return
+    end
+
+    if not Store.SetState(source, RZ.State.RESPAWN_BLOCKED, via or 'normal respawn after elimination') then
+        RZ.Log.LootBagSkip(source, 'respawn', 'state transition to respawn_blocked was rejected')
+        return
+    end
+
+    local minutes = Config.Cooldown.minutes or 0
+    if minutes > 0 then
+        local durationMs = minutes * 60 * 1000
+        RZ.Cooldowns.Apply(record.citizenid, zoneId, durationMs)
+        RZ.Log.RespawnCooldown(record.citizenid, zoneId, minutes)
+        RZ.Notify(source, 'access.cooldown', { RZ.Util.FormatDuration(durationMs) }, 'error')
+    end
+
+    RZ.Elimination.ForfeitOnRespawn(source, zoneId)
+    RZ.LootBag.OnRespawn(source)
+    RZ.Knock.ClearPresentation(record)
+    record.eliminationZoneId = nil
+    record.eliminatedAt, record.elimSeenDead, record.elimKillResent = nil, nil, nil
+end
+
 local function wireRespawn()
     RZ.Medical.RegisterRespawnHandler(function(source)
-        local record = Store.Get(source)
-        if not record then return end
-
-        if record.state ~= RZ.State.ELIMINATED then
-            RZ.Log.LootBagSkip(source, 'respawn',
-                ('state is "%s", not "eliminated" — they did not die through the RedZone knock system')
-                :format(record.state))
-            return
-        end
-
-        local zoneId = record.eliminationZoneId or record.zoneId
-        if not zoneId then
-            RZ.Log.LootBagSkip(source, 'respawn', 'no elimination zone recorded')
-            return
-        end
-
-        if not Store.SetState(source, RZ.State.RESPAWN_BLOCKED, 'normal respawn after elimination') then
-            RZ.Log.LootBagSkip(source, 'respawn', 'state transition to respawn_blocked was rejected')
-            return
-        end
-
-        local durationMs = Config.Cooldown.minutes * 60 * 1000
-        RZ.Cooldowns.Apply(record.citizenid, zoneId, durationMs)
-        RZ.Log.RespawnCooldown(record.citizenid, zoneId, Config.Cooldown.minutes)
-        RZ.Notify(source, 'access.cooldown', { RZ.Util.FormatDuration(durationMs) }, 'error')
-
-        RZ.Elimination.ForfeitOnRespawn(source, zoneId)
-        RZ.LootBag.OnRespawn(source)
-        RZ.Knock.ClearPresentation(record)
+        RZ.Cleanup.Respawned(source, 'normal respawn after elimination')
     end)
 end
 
@@ -420,6 +419,8 @@ local function boot()
     end
 
     RZ.AdminAuth.ReportConfiguration()
+    RZ.AdminApply.PrimeKnownZones()
+    RZ.Gangs.Detect()
 
     RZ.Schedule.Start()
     RZ.Session.Prime()

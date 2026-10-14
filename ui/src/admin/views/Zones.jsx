@@ -108,9 +108,9 @@ export default function Zones() {
 
   const remove = useCallback((zoneId, label) => ask({
     title: `Delete ${label}?`,
-    body: 'The zone is removed from the draft only, along with any unsaved edits to it. It stays '
-      + 'live until you publish. Publishing evacuates everyone inside it and prunes its crate, '
-      + 'cooldowns, squads, death records and session state.',
+    body: 'The zone is removed from the draft, along with any unsaved edits to it. Press Publish '
+      + 'and it is gone straight away: anyone inside is released, and its crate, loot bags and '
+      + 'session end.',
     confirmLabel: 'Delete',
     danger: true,
     onConfirm: () => {

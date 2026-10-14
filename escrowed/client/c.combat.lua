@@ -107,24 +107,39 @@ local function updateCrawl(ped, cfg)
     end
 end
 
+-- Brings a dead ped back where it lies. NetworkResurrectLocalPlayer can hand back a new ped
+-- handle, so callers must re-read PlayerPedId() afterwards.
+local function resurrectInPlace(ped)
+    if not IsEntityDead(ped) then return ped end
+    local pos = GetEntityCoords(ped)
+    local z = pos.z
+    local found, groundZ = GetGroundZFor_3dCoord(pos.x, pos.y, pos.z + 2.0, false)
+    if found and groundZ then z = groundZ + 0.15 end
+    NetworkResurrectLocalPlayer(pos.x, pos.y, z, GetEntityHeading(ped), true, false)
+    return PlayerPedId()
+end
+
+-- The death resource (or something else) took the ped while it was down: put it back on the
+-- ground at downed health and restart the crawl, without restarting the presentation loop.
+local function reassertDowned(cfg)
+    local ped = resurrectInPlace(PlayerPedId())
+    ClearPedTasksImmediately(ped)
+    SetPedCanRagdoll(ped, false)
+    SetEntityHealth(ped, cfg.downedHealth)
+    RZ.MedicalCl.AssertAlive()
+    SetCurrentPedWeapon(ped, joaat('WEAPON_UNARMED'), true)
+    crawlMode = nil
+end
+
 local function enterLocalDowned(cfg)
     if isDowned then
         downedConfig = cfg
+        if cfg.reassert then reassertDowned(cfg) end
         return
     end
     isDowned = true
     downedConfig = cfg
-    local ped = PlayerPedId()
-    if IsEntityDead(ped) then
-        local pos = GetEntityCoords(ped)
-        local z = pos.z
-        local found, groundZ = GetGroundZFor_3dCoord(pos.x, pos.y, pos.z + 2.0, false)
-        if found and groundZ then z = groundZ + 0.15 end
-        NetworkResurrectLocalPlayer(pos.x, pos.y, z, GetEntityHeading(ped), true, false)
-    end
-    if IsPedInAnyVehicle(ped, false) then
-        ClearPedTasksImmediately(ped)
-    end
+    local ped = resurrectInPlace(PlayerPedId())
     ClearPedTasksImmediately(ped)
     SetPedCanRagdoll(ped, false)
     SetEntityHealth(ped, cfg.downedHealth)

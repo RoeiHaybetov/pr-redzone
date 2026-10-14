@@ -25,6 +25,11 @@ D.Logging = {
     },
 }
 
+D.Gangs = {
+    resource = 'auto', requireGang = true,
+    soloGangs = { 'solo' }, notGangs = { 'none', 'unemployed', 'unemployed2' },
+}
+
 D.Knock = {
     finishThreshold = 5,
     crawl = {
@@ -94,7 +99,7 @@ local ZONE = {
     blip = {
         enabled = true, showWhenClosed = false,
         style = 'filled', color = 1, alpha = 80,
-        outlineWidth = 5.0, detail = 8.0, maxParts = 64,
+        outlineWidth = 5.0, detail = 6.0, maxParts = 96,
         centerSprite = 84, centerColor = 1, centerScale = 0.9,
     },
     boundary = {
