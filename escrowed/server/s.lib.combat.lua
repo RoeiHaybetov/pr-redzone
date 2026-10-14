@@ -313,6 +313,9 @@ AddEventHandler('weaponDamageEvent', function(sender, data)
         local damage = tonumber(data.weaponDamage) or 0
         local remaining = GetEntityHealth(ped) + GetPedArmour(ped) - damage
         if data.willKill ~= true and remaining > Config.Knock.lethalThreshold then return end
+        -- record.zoneId lags a crossing by up to one tick; a hit just past the line is an
+        -- ordinary death out there, not a knock nobody could revive.
+        if not RZ.Access.IsInsideZone(victim, record.zoneId) then return end
         if Knock.EnterDowned(victim, record.zoneId, 'lethal hit') then CancelEvent() end
         return
     end
@@ -697,6 +700,7 @@ function Elim.Eliminate(source, cause)
     record.eliminatedAt = RZ.Mono()
     record.elimSeenDead = false
     record.elimKillResent = false
+    record.elimAliveSince = nil
     Elim.CreateRecord(source, zoneId, cause)
     RZ.LootBag.SnapshotOnElimination(source, zoneId)
     RZ.Medical.MarkFullyDead(source)
@@ -707,7 +711,7 @@ end
 -- ALIVE), the death resource's respawn hook, or anything else that brings the ped back —
 -- an EMS revive, /revive, a death script with no hook we know. The last case used to leave
 -- them ELIMINATED forever, so they could never be knocked again. This catches it.
-local KILL_RESEND_AFTER_MS, GIVE_UP_AFTER_MS = 6000, 15000
+local KILL_RESEND_AFTER_MS, GIVE_UP_AFTER_MS, ALIVE_CONFIRM_MS = 6000, 15000, 3000
 
 function Elim.WatchEliminated(source, record)
     local ped = GetPlayerPed(source)
@@ -715,8 +719,15 @@ function Elim.WatchEliminated(source, record)
 
     if GetEntityHealth(ped) <= 0 or RZ.Medical.IsDeadOrLastStand(source) then
         record.elimSeenDead = true
+        record.elimAliveSince = nil
         return
     end
+
+    -- Death resources resurrect the ped for their last-stand animation a moment before they
+    -- publish the down state, so one living sample is not yet a respawn.
+    local now = RZ.Mono()
+    record.elimAliveSince = record.elimAliveSince or now
+    if record.elimSeenDead and (now - record.elimAliveSince) < ALIVE_CONFIRM_MS then return end
 
     if not record.elimSeenDead then
         local since = RZ.Mono() - (record.eliminatedAt or 0)

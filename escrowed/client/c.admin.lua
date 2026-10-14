@@ -221,6 +221,8 @@ end
 -- them out of it, and CTRL toggled stealth on the real ped.
 function P.BlockControls()
     DisableAllControlActions(0)
+    EnableControlAction(0, 249, true) -- push to talk
+    EnableControlAction(0, 245, true) -- chat
 end
 
 function P.FlyCamera(speed)

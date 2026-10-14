@@ -85,9 +85,15 @@ local DROP = {
 
 local SERVER_SIDE = {
     [DROP.RESOURCE] = true, [DROP.SERVER] = true, [DROP.SERVER_SHUTDOWN] = true,
-    [DROP.STATE_BAG_RATE_LIMIT] = true, [DROP.NET_EVENT_RATE_LIMIT] = true,
-    [DROP.LATENT_NET_EVENT_RATE_LIMIT] = true, [DROP.COMMAND_RATE_LIMIT] = true,
-    [DROP.NET_GAME_EVENT_RATE_LIMIT] = true,
+}
+
+-- Dropped for flooding the server. The flood comes from the client itself, so these are not
+-- forgiven freely: command spam is something F8 alone can do, so it counts as a quit; the
+-- rest could be a buggy resource, so they count against the crash allowance like an error.
+local CLIENT_FLOOD = {
+    [DROP.STATE_BAG_RATE_LIMIT] = 'error', [DROP.NET_EVENT_RATE_LIMIT] = 'error',
+    [DROP.LATENT_NET_EVENT_RATE_LIMIT] = 'error', [DROP.COMMAND_RATE_LIMIT] = 'quit',
+    [DROP.NET_GAME_EVENT_RATE_LIMIT] = 'error',
 }
 
 -- "Game crashed: " as FiveM's crash handler writes it in every client language that has
@@ -123,6 +129,7 @@ function CombatLog.Kind(reason, category)
     local text = type(reason) == 'string' and reason:gsub('^%s+', ''):gsub('%s+$', '') or ''
     local cat = tonumber(category)
 
+    if cat and CLIENT_FLOOD[cat] then return CLIENT_FLOOD[cat], 'dropped for flooding the server' end
     if cat and SERVER_SIDE[cat] then return 'server', 'removed by the server or a resource' end
     if cat == DROP.TIMED_OUT_PENDING then return 'congestion', 'server-side network congestion' end
     if cat == DROP.ONESYNC_MISSED_FRAMES then return 'freeze', 'the game stopped responding' end
@@ -143,11 +150,12 @@ function CombatLog.Kind(reason, category)
         if startsWith(text, 'Timed out after 60 seconds') then return 'freeze', 'the game stopped responding' end
     end
 
-    if startsWith(text, 'Quit: ') then
-        local rest = text:sub(7):lower()
+    if startsWith(text, 'Quit:') then
+        local body = text:sub(6):gsub('^%s+', '')
         for i = 1, #CRASH_PREFIXES do
-            if startsWith(text:sub(7), CRASH_PREFIXES[i]) then return 'fake_crash', 'typed a crash message into F8 quit' end
+            if startsWith(body, CRASH_PREFIXES[i]) then return 'fake_crash', 'typed a crash message into F8 quit' end
         end
+        local rest = body:lower()
         if rest:find('crash', 1, true) or rest:find('timed out', 1, true) then
             return 'fake_crash', 'typed a crash message into F8 quit'
         end
@@ -212,6 +220,12 @@ end
 
 function RZ.Cleanup.Player(source, reason, category)
     local record = Store.Get(source)
+    if record then
+        -- The first cleanup can pause on the cooldown write; the validation loop may notice
+        -- the player is gone meanwhile and call in again. Judge and clean up once.
+        if record.cleaningUp then return end
+        record.cleaningUp = true
+    end
 
     if reason ~= 'character unload' then
         -- Everything up to the bag must run without yielding: ox_inventory unloads the
@@ -377,7 +391,7 @@ local function wireSchedule()
             RZ.Squads.ClearSnapshotsForSession(endedSessionId)
         end
         RZ.Elimination.InvalidateSessionRecords(zoneId, endedSessionId)
-        RZ.AdminApply.FlushDeferred()
+        if RZ.AdminApply.QueueDue() then RZ.AdminApply.FlushDeferred() end
     end)
 
     RZ.Session.OnStart(function(zoneId, sessionId)
@@ -433,7 +447,7 @@ function RZ.Cleanup.Respawned(source, via)
     RZ.LootBag.OnRespawn(source)
     RZ.Knock.ClearPresentation(record)
     record.eliminationZoneId = nil
-    record.eliminatedAt, record.elimSeenDead, record.elimKillResent = nil, nil, nil
+    record.eliminatedAt, record.elimSeenDead, record.elimKillResent, record.elimAliveSince = nil, nil, nil, nil
 end
 
 local function wireRespawn()

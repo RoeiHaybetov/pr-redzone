@@ -196,6 +196,7 @@ register(RZ.AdminCallback.GET_CONFIG, 'adminRead', nil, function()
         fields = out,
         zones = zoneIds,
         zoneStructure = S.ToJson(RZ.AdminStore.PendingZones()),
+        liveZoneStructure = S.ToJson(Config.Zones),
         queued = RZ.AdminApply.GetDeferred() ~= nil,
         webhookConfigured = (webhook ~= nil and webhook ~= ''),
         suggestions = {
@@ -318,6 +319,10 @@ register(RZ.AdminCallback.SET_WEBHOOK, 'adminPublish', 'error', function(source,
         end
     end
 
+    if not RZ.AdminApply.Lock(session.source, 15000) then
+        return { ok = false, error = 'A configuration change is being applied. Try again in a moment.' }
+    end
+
     local value = clearing and '' or url
     local flat, zones, queued = RZ.AdminStore.PendingState()
     flat['Logging.webhook'] = value
@@ -337,6 +342,7 @@ register(RZ.AdminCallback.SET_WEBHOOK, 'adminPublish', 'error', function(source,
         queued.flat = flat
         queued.revision = revision
     end
+    RZ.AdminApply.Unlock(session.source)
     if not committed then
         RZ.AdminAudit.Write(session, 'webhook', nil, nil, false, 'save failed')
         return { ok = false, error = 'Could not save the webhook.' }

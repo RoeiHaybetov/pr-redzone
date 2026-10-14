@@ -912,8 +912,25 @@ end
 Apply.MergePaths = mergePaths
 
 function Apply.Defer(payload)
+    if payload.waitFor == nil then
+        payload.waitFor = {}
+        for zoneId, zone in pairs(Config.Zones or {}) do
+            local sessionId = zone.enabled and RZ.Session.GetId(zoneId) or nil
+            if sessionId then payload.waitFor[zoneId] = sessionId end
+        end
+    end
     deferred = payload
     RZ.Log.Info(('admin: revision %d queued for the next RedZone session.'):format(payload.revision or 0))
+end
+
+-- A queue was made because some session was running; it applies once every one of those
+-- sessions has ended, not when the first zone happens to close.
+function Apply.QueueDue()
+    if not deferred then return false end
+    for zoneId, sessionId in pairs(deferred.waitFor or {}) do
+        if RZ.Session.GetId(zoneId) == sessionId then return false end
+    end
+    return true
 end
 
 function Apply.GetDeferred() return deferred end
@@ -1102,11 +1119,21 @@ function P.BuildDiff(candidate, changedPaths)
     return diff
 end
 
+-- Per-zone settings of a zone the candidate no longer has are skipped, the same rule
+-- applyOverrideSet uses: writing them would rebuild the deleted zone as a shapeless ghost.
+local function zoneOfPath(path)
+    return path:match('^Zones%.([^%.]+)%.')
+end
+
 function P.BuildCandidate(flat, zones)
     local candidate = S.Copy(RZ.AdminStore.GetDefaults())
     if zones then candidate.Zones = S.Copy(zones) end
+    local present = candidate.Zones or {}
     for path, value in pairs(flat) do
-        if path ~= '__zones' then S.Set(candidate, path, value) end
+        local zoneId = zoneOfPath(path)
+        if path ~= '__zones' and not (zoneId and present[zoneId] == nil) then
+            S.Set(candidate, path, value)
+        end
     end
     return candidate
 end
@@ -1186,7 +1213,14 @@ function P.ValidateDraft(draft)
         add(zoneChange.removed, 'deleted')
         add(zoneChange.reshaped, 'reshaped')
     end
-    result.applyMode = RZ.AdminApply.ModeFor(changed, zoneChange)
+    local queued = RZ.AdminApply.GetDeferred()
+    if queued then
+        -- Applying now also applies whatever is queued, so its mode counts too.
+        result.applyMode = RZ.AdminApply.ModeFor(RZ.AdminApply.MergePaths(queued.changedPaths, changed),
+            RZ.AdminApply.ClassifyZones(Config.Zones, zones))
+    else
+        result.applyMode = RZ.AdminApply.ModeFor(changed, zoneChange)
+    end
     result.ok = #result.errors == 0
 
     RZ.AdminSchema.Reindex(Config)
@@ -1259,6 +1293,13 @@ function P.Publish(session, draft, opts)
         local lean = {}
         for zoneId, zone in pairs(zones) do lean[zoneId] = RZ.Defaults.StripZone(S.Copy(zone)) end
         zones = lean
+    end
+
+    if zones then
+        for path in pairs(flat) do
+            local zoneId = zoneOfPath(path)
+            if zoneId and zones[zoneId] == nil then flat[path] = nil end
+        end
     end
 
     local mode = opts.applyMode or validation.applyMode
@@ -1410,7 +1451,7 @@ function Diag.Run()
     local gangText = RZ.Gangs.Describe()
     add('Dependencies', 'Gang source', OK, ('auto-detected: %s'):format(gangText))
     local soloGangs = Config.Gangs and Config.Gangs.soloGangs
-    add('Dependencies', 'Gang access', OK, (Config.Gangs and Config.Gangs.requireGang == false)
+    add('Dependencies', 'Gang access', OK, (not RZ.Gangs.RequiresGang())
         and 'players with no gang fight as Solo Squads'
         or ('gang members only; solo gang: %s'):format(type(soloGangs) == 'table' and #soloGangs > 0
             and table.concat(soloGangs, ', ') or 'none set'))
@@ -1690,8 +1731,21 @@ local actions = {
         return { ok = true, message = 'Queued configuration applied now.', audit = { 'flush_deferred' } }
     end,
 
-    cancel_deferred = function()
-        RZ.AdminApply.ClearDeferred()
+    cancel_deferred = function(session)
+        if not RZ.AdminApply.GetDeferred() then
+            return { ok = false, error = 'Nothing is queued for the next session.' }
+        end
+        if not RZ.AdminApply.Lock(session.source, 15000) then
+            return { ok = false, error = 'A configuration change is being applied. Try again in a moment.' }
+        end
+        -- The queued state is what is saved, so a restart would apply it: save the live state
+        -- back over it before forgetting the queue.
+        local flat, zones = RZ.AdminStore.CurrentFlat()
+        local ok = RZ.AdminStore.Commit(S.Copy(flat), zones and S.Copy(zones) or nil,
+            session.discordId, session.name, false)
+        if ok then RZ.AdminApply.ClearDeferred() end
+        RZ.AdminApply.Unlock(session.source)
+        if not ok then return { ok = false, error = 'Could not save the live configuration; the queue was kept.' } end
         return { ok = true, message = 'Queued configuration discarded.', audit = { 'cancel_deferred' } }
     end,
 

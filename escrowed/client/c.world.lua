@@ -49,7 +49,7 @@ local function startMarker(zoneId)
         local pts = zone.points
         local n = #pts
 
-        while markerRunning and inside[zoneId] do
+        while markerRunning and inside[zoneId] and RZ.Client.canSee do
             local me = GetEntityCoords(PlayerPedId())
             local base = me.z - 1.0
             local top = base + WALL_HEIGHT
@@ -514,6 +514,8 @@ AddEventHandler(RZ.Local.LEFT_ZONE, reconcile)
 AddEventHandler(RZ.Local.ZONES_CHANGED, function()
     Blips.Refresh()
     reconcile()
+    local current = Zones.Current()
+    if current and RZ.Client.canSee then startMarker(current) end
 end)
 
 AddEventHandler(RZ.Local.CRATE_CHANGED, function()

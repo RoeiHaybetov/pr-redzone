@@ -407,7 +407,9 @@ function Access.Evaluate(source)
             Store.SetZone(source, nil)
             RZ.Sync.PushWorld(source)
         end
-        if record.state == RZ.State.ALIVE or record.state == RZ.State.RESPAWN_BLOCKED then
+        -- RESPAWN_BLOCKED stays as it is out here: a teammate may still be carrying their
+        -- DNA to a station. The in-zone gate below lets them back in once allowed.
+        if record.state == RZ.State.ALIVE then
             Store.SetState(source, RZ.State.OUTSIDE, 'left zone')
         end
         return

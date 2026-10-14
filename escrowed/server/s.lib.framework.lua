@@ -581,11 +581,11 @@ function Gangs.Detect(quiet)
 
     local solo = cfg.soloGangs
     local soloText = type(solo) == 'table' and #solo > 0 and table.concat(solo, ', ') or '(none)'
-    if cfg.requireGang ~= false then
+    if Gangs.RequiresGang() then
         print(('[pr-redzone] gangs: players with no gang cannot see or enter the RedZone. Solo gang: %s.')
             :format(soloText))
     else
-        print('[pr-redzone] gangs: players with no gang fight as Solo Squads (Config.Gangs.requireGang = false).')
+        print('[pr-redzone] gangs: players with no gang fight as Solo Squads.')
     end
     return gangSource
 end
@@ -613,6 +613,17 @@ local function normalizeGang(value, depth)
     return nil
 end
 
+local function matchesList(gang, list)
+    if type(list) ~= 'table' then return false end
+    local name = gang.name:lower()
+    local label = type(gang.label) == 'string' and gang.label:lower() or nil
+    for i = 1, #list do
+        local entry = tostring(list[i]):lower()
+        if entry == name or entry == label then return true end
+    end
+    return false
+end
+
 local function callGangExport(source)
     if not gangSource then return nil end
     local resource, export = gangSource.resource, gangSource.export
@@ -624,18 +635,25 @@ local function callGangExport(source)
         return normalizeGang(res), true
     end
 
+    -- Only a real gang settles whether the export wants a server id or a citizen id: a
+    -- no-gang default answer to the wrong key would otherwise lock in the wrong one.
+    local function informative(g) return g ~= nil and g.name:lower() ~= NO_GANG end
+
+    local bySource
     if gangArgMode ~= 'identity' then
         local gang = call(source)
-        if gang then gangArgMode = 'source' return gang end
-        if gangArgMode == 'source' then return nil end
+        if informative(gang) then gangArgMode = 'source' return gang end
+        if gangArgMode == 'source' then return gang end
+        bySource = gang
     end
 
     local identity = Fw.Identity(source)
     if identity then
         local gang = call(identity)
-        if gang then gangArgMode = 'identity' return gang end
+        if informative(gang) then gangArgMode = 'identity' return gang end
+        if gang then return gang end
     end
-    return nil
+    return bySource
 end
 
 local function frameworkGang(source)
@@ -658,7 +676,8 @@ local function readGang(source)
     local function real(g)
         if not g then return false end
         local n = g.name:lower()
-        return n ~= NO_GANG and n ~= 'unemployed'
+        if n == NO_GANG or n == 'unemployed' then return false end
+        return not matchesList(g, cfgGangs().notGangs)
     end
 
     if real(fromExport) then return fromExport, true end
@@ -670,17 +689,6 @@ local function readGang(source)
     if real(fromBag) then return fromBag, true end
 
     return fromExport or fromFramework or fromBag, true
-end
-
-local function matchesList(gang, list)
-    if type(list) ~= 'table' then return false end
-    local name = gang.name:lower()
-    local label = type(gang.label) == 'string' and gang.label:lower() or nil
-    for i = 1, #list do
-        local entry = tostring(list[i]):lower()
-        if entry == name or entry == label then return true end
-    end
-    return false
 end
 
 local function gangExists(name)
@@ -727,6 +735,14 @@ function Gangs.Describe()
     return ('%s gangs'):format(Fw.Describe()), false
 end
 
+-- Gang-only access needs a gang system. Standalone with no gang resource has none, so
+-- everyone plays as Solo there, as before.
+function Gangs.RequiresGang()
+    if cfgGangs().requireGang == false then return false end
+    if Fw.IsStandalone() and not gangSource then return false end
+    return true
+end
+
 function Gangs.Forget(source)
     if source then gangCache[source] = nil else gangCache = {} end
 end
@@ -749,7 +765,7 @@ local function resolveGang(source)
     if kind == 'gang' then return name, nil end
     if kind == 'solo' then return nil, RZ.Reject.SOLO end
     if kind == 'invalid' then return nil, RZ.Reject.INVALID_GANG end
-    if cfgGangs().requireGang ~= false then return nil, RZ.Reject.NO_GANG end
+    if Gangs.RequiresGang() then return nil, RZ.Reject.NO_GANG end
     return nil, RZ.Reject.SOLO
 end
 

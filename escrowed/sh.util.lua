@@ -418,35 +418,58 @@ function Geo.PolygonBlipParts(poly, detail, maxParts)
         span(ym, y1, lm, lb, rm, rb, depth + 1)
     end
 
-    for _ = 1, 8 do
+    -- First try the solid-core fill at the configured detail. A zone with so many corners
+    -- that it cannot fit the blip budget that way falls back to plain full-width strips,
+    -- coarsened until it fits; coarsening the core fill instead would spill it far past the
+    -- border, because every span there costs at least three blips whatever the detail.
+    local function strips(y0, y1, h)
+        spansAt(poly, y0 + h * 0.25, lo)
+        spansAt(poly, y0 + h * 0.75, hi)
+        local flat = #lo == #hi
+        if flat then
+            for i = 1, #lo do
+                if math.abs(lo[i][1] - hi[i][1]) > 0.175 or math.abs(lo[i][2] - hi[i][2]) > 0.175 then
+                    flat = false
+                    break
+                end
+            end
+        end
+        local steps = flat and 1 or math.max(1, math.ceil(h / detail))
+        for s = 0, steps - 1 do
+            local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
+            spansAt(poly, (a0 + a1) * 0.5, sub)
+            for i = 1, #sub do add(sub[i][1], sub[i][2], a0, a1) end
+        end
+    end
+
+    for pass = 1, 10 do
         parts = {}
         for k = 1, #rows - 1 do
             local y0, y1 = rows[k], rows[k + 1]
             local h = y1 - y0
             if h >= 0.25 then
-                -- No vertex lies strictly inside a band, so every edge is straight across
-                -- it: sample a quarter of the way in from each end, where no span has
-                -- pinched to nothing yet, and extend the edges out to the band's ends.
-                spansAt(poly, y0 + h * 0.25, lo)
-                spansAt(poly, y0 + h * 0.75, hi)
-                if #lo == #hi then
-                    for i = 1, #lo do
-                        local l1, l3, r1, r3 = lo[i][1], hi[i][1], lo[i][2], hi[i][2]
-                        local dl, dr = (l3 - l1) * 0.5, (r3 - r1) * 0.5
-                        span(y0, y1, l1 - dl, l3 + dl, r1 - dr, r3 + dr, 0)
-                    end
+                if pass > 1 then
+                    strips(y0, y1, h)
                 else
-                    local steps = math.max(1, math.ceil(h / detail))
-                    for s = 0, steps - 1 do
-                        local a0, a1 = y0 + h * s / steps, y0 + h * (s + 1) / steps
-                        spansAt(poly, (a0 + a1) * 0.5, sub)
-                        for i = 1, #sub do add(sub[i][1], sub[i][2], a0, a1) end
+                    -- No vertex lies strictly inside a band, so every edge is straight across
+                    -- it: sample a quarter of the way in from each end, where no span has
+                    -- pinched to nothing yet, and extend the edges out to the band's ends.
+                    spansAt(poly, y0 + h * 0.25, lo)
+                    spansAt(poly, y0 + h * 0.75, hi)
+                    if #lo == #hi then
+                        for i = 1, #lo do
+                            local l1, l3, r1, r3 = lo[i][1], hi[i][1], lo[i][2], hi[i][2]
+                            local dl, dr = (l3 - l1) * 0.5, (r3 - r1) * 0.5
+                            span(y0, y1, l1 - dl, l3 + dl, r1 - dr, r3 + dr, 0)
+                        end
+                    else
+                        strips(y0, y1, h)
                     end
                 end
             end
         end
         if #parts <= maxParts then break end
-        detail = detail * 1.5
+        if pass > 1 then detail = detail * 1.5 end
     end
 
     return parts

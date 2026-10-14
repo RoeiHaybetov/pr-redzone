@@ -123,11 +123,12 @@ export default function Zones() {
   }), [ask, cfg.fields, resetPath, setZones, notify])
 
   const restore = useCallback((zoneId, label) => {
-    const original = (cfg.zoneStructure || {})[zoneId]
+    // A zone whose removal is queued for the next session is only in the live shapes.
+    const original = (cfg.zoneStructure || {})[zoneId] || (cfg.liveZoneStructure || {})[zoneId]
     if (!original) return
     setZones({ ...baseRef.current, [zoneId]: original })
     notify(`"${label}" will be kept.`)
-  }, [cfg.zoneStructure, setZones, notify])
+  }, [cfg.zoneStructure, cfg.liveZoneStructure, setZones, notify])
 
   return (
     <>

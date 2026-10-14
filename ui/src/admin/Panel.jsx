@@ -168,6 +168,7 @@ export default function AdminPanel() {
       fields,
       zones: c.zones || [],
       zoneStructure: c.zoneStructure || null,
+      liveZoneStructure: c.liveZoneStructure || null,
       webhookConfigured: !!c.webhookConfigured,
       suggestions: c.suggestions || {},
     }))
