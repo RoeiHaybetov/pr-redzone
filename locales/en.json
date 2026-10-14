@@ -146,6 +146,7 @@
     "invites_none": "No pending invitations.",
     "invite_received_title": "RedZone Squad Invitation",
     "invite_received_body": "%s invited you to join.",
+    "invite_open_hint": "Open /rzsquad to accept or decline.",
     "entry_requires_squad": "You must create or join a Solo Squad before entering the RedZone.",
     "joined_after_lock": "You joined this squad after its current RedZone roster was locked. You can participate with this squad in the next session.",
     "you_were_kicked": "You were removed from your squad.",

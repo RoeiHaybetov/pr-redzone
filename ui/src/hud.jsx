@@ -313,7 +313,7 @@ export function InviteToast() {
     setInvite({ ...data, interactive, at: Date.now() })
   }, [])
 
-  // inviteToast only arrives while the squad panel is closed, so there is no NUI focus to click with
+  // inviteToast is only sent while the squad panel is closed, so the toast has no focus to click with.
   useNuiEvent('invite', (data, msg) => receive(data, msg, true))
   useNuiEvent('inviteToast', (data, msg) => receive(data, msg, false))
 

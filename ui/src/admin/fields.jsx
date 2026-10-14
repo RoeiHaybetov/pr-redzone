@@ -19,11 +19,12 @@ const LIMIT_KEYS = [['max', 1], ['windowMs', 500]]
 function NumberInput({ value, min, max, step, onCommit, className = '' }) {
   const [text, setText] = useState(String(value ?? ''))
   const [bad, setBad] = useState(false)
+  const [commits, setCommits] = useState(0)
 
   useEffect(() => {
     setText(String(value ?? ''))
     setBad(false)
-  }, [value])
+  }, [value, commits])
 
   return (
     <Input
@@ -35,6 +36,7 @@ function NumberInput({ value, min, max, step, onCommit, className = '' }) {
         if (!isFinite(n) || text === '') { setBad(true); return }
         setBad(false)
         onCommit(n)
+        setCommits((c) => c + 1)
       }}
       onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
     />

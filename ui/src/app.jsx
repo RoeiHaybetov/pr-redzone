@@ -2,6 +2,7 @@ import { Component } from 'react'
 import { CrateHud, KnockHud, CprHud, InviteToast } from './hud'
 import SquadPanel from './squad'
 import AdminPanel from './admin/Panel'
+import { post } from './lib'
 
 class Boundary extends Component {
   constructor(props) {
@@ -15,6 +16,9 @@ class Boundary extends Component {
 
   componentDidCatch(error, info) {
     console.error(`[pr-redzone] ${this.props.name} failed to render`, error, info)
+    if (!this.props.release) return
+    post(this.props.release, {})
+    this.setState({ failed: false })
   }
 
   render() {
@@ -27,15 +31,15 @@ const SURFACES = [
   ['knock', KnockHud],
   ['cpr', CprHud],
   ['invite toast', InviteToast],
-  ['squad panel', SquadPanel],
-  ['admin panel', AdminPanel],
+  ['squad panel', SquadPanel, 'close'],
+  ['admin panel', AdminPanel, 'rzAdminClose'],
 ]
 
 export default function App() {
   return (
     <>
-      {SURFACES.map(([name, Surface]) => (
-        <Boundary key={name} name={name}>
+      {SURFACES.map(([name, Surface, release]) => (
+        <Boundary key={name} name={name} release={release}>
           <Surface />
         </Boundary>
       ))}
