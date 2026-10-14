@@ -31,6 +31,8 @@ const EMPTY_DRAFT = {
   crate: null, rewardItem: '', seller: null, stations: [],
 }
 
+const hour = (v) => (String(v).trim() === '' ? NaN : Number(v))
+
 function slugify(name) {
   return String(name || '')
     .toLowerCase()
@@ -231,12 +233,19 @@ export default function Create() {
 
     if (!draft.points || draft.points.length < 3) out.shape = 'Draw the zone shape.'
 
-    const oh = Number(draft.openHour)
-    const ch = Number(draft.closeHour)
+    const oh = hour(draft.openHour)
+    const ch = hour(draft.closeHour)
     if (!Number.isInteger(oh) || oh < 0 || oh > 23 || !Number.isInteger(ch) || ch < 0 || ch > 23) {
       out.schedule = 'Opening and closing hours must be whole hours between 0 and 23.'
     } else if (oh === ch) {
       out.schedule = 'Opening and closing hour cannot be the same.'
+    }
+
+    if (String(draft.utcOffset).trim() !== '') {
+      const offset = Number(draft.utcOffset)
+      if (!isFinite(offset) || offset < -12 || offset > 14) {
+        out.schedule = out.schedule || 'UTC offset must be between -12 and 14, or blank.'
+      }
     }
 
     if (!draft.crate) out.crate = 'Place the crate.'

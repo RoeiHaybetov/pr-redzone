@@ -77,7 +77,13 @@ export default function SquadPanel() {
 
   const askFor = (action, ctx) => {
     const { payload, ...opts } = DIALOGS[action](t, ctx || {})
-    ask({ ...opts, onConfirm: (value) => act(action, payload ? payload(value) : {}) })
+    ask({
+      ...opts,
+      onConfirm: async (value) => {
+        const res = await act(action, payload ? payload(value) : {})
+        return res && res.ok === false && res.error ? { error: t(res.error, res.error) } : null
+      },
+    })
   }
 
   useNuiEvent('open', (data, msg) => {

@@ -306,15 +306,16 @@ export function InviteToast() {
     setInvite(null)
   }, [])
 
-  const receive = useCallback((data, msg) => {
+  const receive = useCallback((data, msg, interactive) => {
     if (msg && msg.locales) setLocales(msg.locales)
     if (!data || typeof data.inviteId !== 'string') return
-    lastRef.current = data
-    setInvite({ ...data, at: Date.now() })
+    lastRef.current = { ...data, interactive }
+    setInvite({ ...data, interactive, at: Date.now() })
   }, [])
 
-  useNuiEvent('invite', receive)
-  useNuiEvent('inviteToast', receive)
+  // inviteToast only arrives while the squad panel is closed, so there is no NUI focus to click with
+  useNuiEvent('invite', (data, msg) => receive(data, msg, true))
+  useNuiEvent('inviteToast', (data, msg) => receive(data, msg, false))
 
   useNuiEvent('inviteExpired', (data) => {
     if (lastRef.current && data && lastRef.current.inviteId === data.inviteId) dismiss()
@@ -347,7 +348,8 @@ export function InviteToast() {
 
   if (!mounted) return null
 
-  const squadName = (invite || lastRef.current || {}).squadName || '?'
+  const current = invite || lastRef.current || {}
+  const squadName = current.squadName || '?'
 
   return (
     <div className={`rz-toast ${leaving ? 'is-leaving' : ''}`.trim()}>
@@ -361,14 +363,20 @@ export function InviteToast() {
           {t('squad.invite_received_body', 'You were invited to %s.').replace('%s', squadName)}
         </span>
 
-        <div className="rz-toast-actions">
-          <Button variant="primary" onClick={() => respond(true)}>
-            {t('squad.accept', 'Accept')}
-          </Button>
-          <Button variant="ghost" onClick={() => respond(false)}>
-            {t('squad.decline', 'Decline')}
-          </Button>
-        </div>
+        {current.interactive ? (
+          <div className="rz-toast-actions">
+            <Button variant="primary" onClick={() => respond(true)}>
+              {t('squad.accept', 'Accept')}
+            </Button>
+            <Button variant="ghost" onClick={() => respond(false)}>
+              {t('squad.decline', 'Decline')}
+            </Button>
+          </div>
+        ) : (
+          <span className="rz-toast-text">
+            {t('squad.invite_open_hint', 'Open /rzsquad to accept or decline.')}
+          </span>
+        )}
       </div>
 
       <div className="rz-toast-timer"><span ref={barRef} /></div>
