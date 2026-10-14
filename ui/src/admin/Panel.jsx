@@ -309,9 +309,9 @@ export default function AdminPanel() {
   }), [ask, clearDraft])
 
   const ctx = useMemo(() => ({
-    cfg, valueOf, isChanged, setValue, resetPath, setZones, draftZones,
+    cfg, valueOf, isChanged, setValue, resetPath, setZones, draftZones, clearDraft,
     fieldErrors, notify, ask, reload, search, active, setActive,
-  }), [cfg, valueOf, isChanged, setValue, resetPath, setZones, draftZones, fieldErrors, notify, ask, reload, search, active])
+  }), [cfg, valueOf, isChanged, setValue, resetPath, setZones, draftZones, clearDraft, fieldErrors, notify, ask, reload, search, active])
 
   if (!mounted) return null
 

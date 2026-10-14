@@ -6,7 +6,7 @@ import Settings from './Settings'
 const HISTORY_QUERY = { limit: 30 }
 
 function History() {
-  const { notify, setValue, setZones, setActive } = useAdmin()
+  const { notify, setValue, setZones, setActive, clearDraft } = useAdmin()
   const { data } = useAsync('rzAdminHistory', HISTORY_QUERY)
 
   if (data === undefined) return <SparkLoader />
@@ -22,6 +22,7 @@ function History() {
 
     const draft = r.draft || {}
     const fields = draft.fields || {}
+    clearDraft()
     Object.keys(fields).forEach((p) => setValue(p, fields[p]))
     if (draft.zones) setZones(draft.zones)
 
@@ -89,7 +90,8 @@ function Exchange() {
       let parsed
       try { parsed = JSON.parse(text) } catch { return { error: 'That is not valid JSON.' } }
 
-      if (!parsed || typeof parsed !== 'object' || typeof parsed.fields !== 'object') {
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !parsed.fields
+        || typeof parsed.fields !== 'object' || Array.isArray(parsed.fields)) {
         return { error: 'Missing a "fields" object.' }
       }
       if (Number(parsed.schemaVersion) > Number(cfg.schemaVersion || 1)) {
@@ -104,7 +106,7 @@ function Exchange() {
       })
 
       let zoneNote = ''
-      if (parsed.zones && typeof parsed.zones === 'object') {
+      if (parsed.zones && typeof parsed.zones === 'object' && !Array.isArray(parsed.zones)) {
         setZones(parsed.zones)
         zoneNote = ', including zone geometry'
       }
