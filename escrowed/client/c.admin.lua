@@ -148,11 +148,6 @@ local KEY = {
     cancel = 194, undo = 47, clear = 178, finish = 23,
 }
 
-local BLOCKED = {
-    KEY.forward, KEY.back, KEY.left, KEY.right, KEY.up, KEY.down,
-    24, 25, 22, 23, 47, 178, 199, 200,
-}
-
 local function round(value, fmt)
     return tonumber(fmt:format(value))
 end
@@ -221,10 +216,11 @@ local function cameraDelta(speed)
     return dx, dy
 end
 
+-- The freecam reads every key through IsDisabledControl* / GetDisabledControlNormal, so
+-- everything can be blocked: otherwise W A S D also drove a car the admin sat in, F got
+-- them out of it, and CTRL toggled stealth on the real ped.
 function P.BlockControls()
-    for i = 1, #BLOCKED do
-        DisableControlAction(0, BLOCKED[i], true)
-    end
+    DisableAllControlActions(0)
 end
 
 function P.FlyCamera(speed)
@@ -268,7 +264,7 @@ end
 local PLACEMENT_HELP = {
     '~r~PLACEMENT MODE~s~',
     'W A S D  move        Q / E  up / down',
-    '~y~<~s~ ~y~>~s~  rotate       G  snap to ground',
+    '~y~<~s~ ~y~>~s~  rotate       G  snap to ground (toggle)',
     'SHIFT  faster        CTRL  slower',
     '~g~ENTER~s~  confirm      ~r~BACKSPACE~s~  cancel',
 }
@@ -297,6 +293,7 @@ function P.Begin(data)
     state = {
         path = data.path, slot = data.slot, patchKey = data.patchKey,
         kind = data.kind or 'coords', model = data.model, scenario = data.scenario,
+        snap = false,
         original = { x = c.x, y = c.y, z = c.z, w = c.w or 0.0 },
         current = { x = c.x, y = c.y, z = c.z, w = c.w or 0.0 },
     }
@@ -321,7 +318,10 @@ function P.Begin(data)
             if IsDisabledControlPressed(0, KEY.rotL) then cur.w = (cur.w + (slow and 0.4 or 1.6)) % 360 end
             if IsDisabledControlPressed(0, KEY.rotR) then cur.w = (cur.w - (slow and 0.4 or 1.6)) % 360 end
 
-            if IsDisabledControlJustPressed(0, KEY.snap) then
+            -- A toggle: the aim point is re-read every frame, so a one-frame snap was undone
+            -- on the very next frame and never reached the saved position.
+            if IsDisabledControlJustPressed(0, KEY.snap) then state.snap = not state.snap end
+            if state.snap then
                 local found, groundZ = GetGroundZFor_3dCoord(cur.x, cur.y, cur.z + 5.0, false)
                 if found and groundZ then cur.z = groundZ end
             end
@@ -500,13 +500,17 @@ end
 
 function P.IsActive() return active end
 
-local isOpen = false
+local isOpen, opening = false, false
 local token = nil
 
 function UI.Open(view)
-    if isOpen then return end
+    -- Two quick opens used to both pass the isOpen check while the first was still waiting
+    -- on the server; the second session replaced the first and the menu opened dead.
+    if isOpen or opening then return end
+    opening = true
 
     local grant = lib.callback.await(RZ.AdminCallback.OPEN, false)
+    opening = false
     if type(grant) ~= 'table' or grant.ok ~= true then
         if grant and grant.message then
             RZ.Notify.Show('admin.denied_raw', { grant.message }, 'error')

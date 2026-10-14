@@ -21,8 +21,9 @@ open it on a timer, and let gangs fight over a loot crate they have to hold grou
 - **A contested crate.** It only counts down while exactly one combat group holds the zone.
   Loot it, carry the package to a hidden seller, get paid in materials and a chance at a
   keycard.
-- **Loot bags.** Leave the fight armed — respawn, disconnect, rage-quit — and your hotbar
-  drops as a real `ox_inventory` bag for whoever finds it.
+- **Loot bags.** Leave the fight armed — respawn, F8 quit, a faked crash — and your hotbar
+  (slots 1-5) plus every gun you carry drops as a real `ox_inventory` bag for whoever finds it.
+  A genuine game crash keeps your items.
 - **A lockout.** Dying and respawning locks you out of every zone for a while. Standing in
   one anyway burns your health rather than teleporting you around the boundary.
 - **Gang members only.** A regular citizen with no gang never sees the RedZone on the map and
@@ -273,6 +274,23 @@ claim. Failing resumes the casualty's bleed-out from exactly where it paused.
 **Loot bags use `ox_inventory`'s own drop.** Not a prop with a fake inventory bolted on — a
 real drop, so it works with every inventory feature your players already know.
 
+**Combat logging versus crashing.** When a player leaves mid-fight the server reads how the
+game left, using FiveM's own drop category and reason:
+
+| how they left | what FiveM reports | result |
+|---|---|---|
+| F8 `quit`, Alt+F4, closing the game | `Exiting` | bag + lockout |
+| F8 `quit "Game crashed: …"` (fake) | FiveM forces `Quit: Game crashed: …` | bag + lockout |
+| game killed in Task Manager, network pulled | a timeout ~30s later (no crash report) | bag + lockout |
+| a real game crash | FiveM's crash handler: `Game crashed: …` (any language) | keeps everything |
+| kicked, server restart, game froze | server-side categories | keeps everything |
+
+A cheat client could forge a crash report, so only `crashAllowance` (default 2) crashes in a
+fight are forgiven per player per `crashWindowHours` (24); after that they count as combat
+logs. All of it is under `Config.LootBag.crashCheck` and Combat → Loot bag in the menu. The
+bag is taken in the very first moment of the disconnect, before `ox_inventory` unloads the
+player's inventory.
+
 **DNA is taken from the corpse, not from a dropped prop.** Respawn and you forfeit it. An
 unclaimed record expires on the same clock as the item, so a sample can never outlive the
 record behind it.
@@ -291,8 +309,10 @@ gets written next to every elimination.
 - **No daylight saving.** `utcOffset` is a fixed number of hours. If your region observes
   DST, change it by one when the clocks change — deliberately, rather than trusting a rule
   set that would be wrong for most of the world.
-- **Disconnecting is treated as quitting.** A crash cannot be told apart from a rage-quit, so
-  both cost the same lockout when `applyOnQuitInZone` is on.
+- **A forged crash report looks real.** A normal player cannot fake one (F8 `quit` text is
+  always prefixed with `Quit: `), but a modified client can, which is what `crashAllowance`
+  limits. A genuine connection drop with no crash report counts as a timeout; turn off
+  `punishTimeouts` to forgive those too.
 - **Loot bags need `ox_inventory`.** On anything else the feature disables itself and says so
   at boot.
 - **`ox_inventory` is pinned to 2.41.0.** 2.42.0 removed the qb bridge this resource's

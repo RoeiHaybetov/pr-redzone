@@ -442,9 +442,20 @@ local function crossZone(err, warn, candidate, zoneId, zone)
         end
     end
 
-    local sched = zone.schedule or {}
-    if sched.openHour == sched.closeHour then
+    -- Zone data arrives whole (wizard, import, history), never field by field, so the
+    -- schedule is checked here: a text hour would break the schedule comparison outright.
+    local sched = type(zone.schedule) == 'table' and zone.schedule or {}
+    local function badHour(h)
+        return h ~= nil and not (isFiniteNumber(h) and h == math.floor(h) and h >= 0 and h <= 23)
+    end
+    if badHour(sched.openHour) or badHour(sched.closeHour) then
+        err('Zone "%s": open and close hours must be whole hours from 0 to 23.', zoneId)
+    elseif sched.openHour ~= nil and sched.openHour == sched.closeHour then
         warn('Zone "%s": open and close hours are identical, so the zone is always open.', zoneId)
+    end
+    if sched.utcOffset ~= nil and not (isFiniteNumber(sched.utcOffset)
+        and sched.utcOffset >= -12 and sched.utcOffset <= 14) then
+        err('Zone "%s": the UTC offset must be a number from -12 to 14.', zoneId)
     end
 end
 
@@ -1311,15 +1322,36 @@ function P.LoadRevisionAsDraft(revisionId)
     if (tonumber(decoded.schemaVersion) or 0) > RZ.AdminSchema.SCHEMA_VERSION then
         return nil, 'That revision was written by a newer version of the resource.'
     end
-    local fields, dropped = {}, {}
+    -- A revision stores only what was overridden at the time. Rebuild its full effective
+    -- config, so restoring it also undoes settings (and zones) changed after it instead of
+    -- leaving them at today's values.
+    local defaults = RZ.AdminStore.GetDefaults()
+    local zones = type(decoded.__zones) == 'table' and S.FromJson(decoded.__zones) or S.Copy(defaults.Zones or {})
+    local probe = S.Copy(defaults)
+    probe.Zones = zones
+    RZ.AdminSchema.Reindex(probe)
+
+    local flat, dropped = {}, {}
     for path, value in pairs(decoded.fields or {}) do
         if RZ.AdminSchema.GetField(path) then
-            fields[path] = value
+            flat[path] = S.FromJson(value)
         else
             dropped[#dropped + 1] = path
         end
     end
-    return { fields = fields, zones = decoded.__zones, dropped = dropped }
+
+    local candidate = P.BuildCandidate(flat, zones)
+    if RZ.Defaults and RZ.Defaults.Apply then RZ.Defaults.Apply(candidate) end
+    local fields = {}
+    for path in pairs(RZ.AdminSchema.AllFields()) do
+        if not SPECIAL_PATHS[path] then
+            local value = S.Get(candidate, path)
+            if value ~= nil then fields[path] = S.ToJson(value) end
+        end
+    end
+
+    RZ.AdminSchema.Reindex(Config)
+    return { fields = fields, zones = S.ToJson(zones), dropped = dropped }
 end
 
 local OK, WARN, ERR, NA = 'ok', 'warning', 'error', 'na'

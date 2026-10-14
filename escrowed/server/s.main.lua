@@ -57,84 +57,157 @@ end
 
 -- =============================================================================
 --  Combat log: a quit or a fake crash costs the bag; a genuine game crash does not.
+--
+--  Every client-side leave reaches the server as category CLIENT with a reason string
+--  the client wrote, so the text is all there is to go on. What makes it workable:
+--    - F8 `quit`, Alt+F4 and closing the game always send "Exiting".
+--    - F8 `quit "anything"` is forced by FiveM (since April 2024) to send
+--      "Quit: anything", so typing `quit "Game crashed: ..."` arrives as
+--      "Quit: Game crashed: ..." and can never pass for a real crash.
+--    - A real crash is reported by FiveM's own crash handler and STARTS with
+--      "Game crashed: " in the player's game language.
+--    - Killing the game or pulling the network sends nothing at all: the server drops
+--      the player ~30s later as a timeout, a category of its own the client cannot fake.
+--  A modified client can still forge a crash message, so genuine-looking crashes in a
+--  fight are forgiven only a few times per player per day.
 -- =============================================================================
 
 RZ.CombatLog = {}
 local CombatLog = RZ.CombatLog
 
--- FXServer's drop category, the third playerDropped argument on current server builds.
-local DROP_CATEGORY = {
-    [1] = 'resource', [2] = 'client', [3] = 'server', [4] = 'replaced',
-    [5] = 'timeout', [6] = 'timeout', [7] = 'shutdown',
-    [8] = 'ratelimit', [9] = 'ratelimit', [10] = 'ratelimit', [11] = 'ratelimit',
-    [12] = 'timeout',
+-- playerDropped's third argument on FXServer 9423+ (Aug 2024). nil on older servers.
+local DROP = {
+    RESOURCE = 1, CLIENT = 2, SERVER = 3, CLIENT_REPLACED = 4,
+    TIMED_OUT = 5, TIMED_OUT_PENDING = 6, SERVER_SHUTDOWN = 7,
+    STATE_BAG_RATE_LIMIT = 8, NET_EVENT_RATE_LIMIT = 9, LATENT_NET_EVENT_RATE_LIMIT = 10,
+    COMMAND_RATE_LIMIT = 11, ONESYNC_MISSED_FRAMES = 12, NET_GAME_EVENT_RATE_LIMIT = 13,
 }
+
+local SERVER_SIDE = {
+    [DROP.RESOURCE] = true, [DROP.SERVER] = true, [DROP.SERVER_SHUTDOWN] = true,
+    [DROP.STATE_BAG_RATE_LIMIT] = true, [DROP.NET_EVENT_RATE_LIMIT] = true,
+    [DROP.LATENT_NET_EVENT_RATE_LIMIT] = true, [DROP.COMMAND_RATE_LIMIT] = true,
+    [DROP.NET_GAME_EVENT_RATE_LIMIT] = true,
+}
+
+-- "Game crashed: " as FiveM's crash handler writes it in every client language that has
+-- a translation; the rest fall back to English. Matched at the very start only.
+local CRASH_PREFIXES = {
+    'Game crashed: ', 'Spielabsturz: ', 'El juego crasheó: ', 'Le jeu a cessé de fonctionner : ',
+    'Il gioco ha smesso di funzionare: ', 'O jogo crashou: ', 'Spel werkt niet meer: ',
+    'Игра вылетела: ', 'Oyun çöktü: ', 'Spelet kraschade: ', 'Spillet krasjet: ',
+    'A játék összeomlott: ', 'Pád hry: ', '게임 충돌: ', '游戏发生崩溃： ', '遊戲已崩潰: ',
+    'تعطلت العبة: ',
+}
+
+-- Reasons a vanilla client sends when the player chose to leave.
+local VOLUNTARY = {
+    ['Exiting'] = true, ['Disconnected.'] = true, ['Dropped.'] = true,
+    ['Connecting to another server.'] = true, ['Reloading game.'] = true,
+    ['Entering Rockstar Editor'] = true,
+}
+
+local function startsWith(text, prefix)
+    return text:sub(1, #prefix) == prefix
+end
 
 local function crashCfg()
     return Config.LootBag.crashCheck or {}
 end
 
-local function secondsSince(ms)
-    if not ms then return math.huge end
-    return (RZ.Mono() - ms) / 1000
-end
-
--- What kind of leave this was, from the drop category when the server build sends one and
--- from the reason text otherwise. Returns 'crash' | 'timeout' | 'shutdown' | 'kicked' | 'quit'.
+-- What kind of leave this was. Returns kind, detail, where kind is one of:
+--   'quit' 'fake_crash' 'timeout'           -> punished (timeouts unless switched off)
+--   'crash' 'error'                          -> spared, within the crash allowance
+--   'freeze' 'congestion' 'server'           -> spared
 function CombatLog.Kind(reason, category)
-    local text = type(reason) == 'string' and reason:lower() or ''
-    local cat = DROP_CATEGORY[tonumber(category) or -1]
+    local text = type(reason) == 'string' and reason:gsub('^%s+', ''):gsub('%s+$', '') or ''
+    local cat = tonumber(category)
 
-    if cat == 'shutdown' then return 'shutdown' end
-    if cat == 'timeout' or text:find('timed out', 1, true) then return 'timeout' end
-    if cat == 'resource' or cat == 'server' or cat == 'replaced' or cat == 'ratelimit' then
-        return 'kicked'
+    if cat and SERVER_SIDE[cat] then return 'server', 'removed by the server or a resource' end
+    if cat == DROP.TIMED_OUT_PENDING then return 'congestion', 'server-side network congestion' end
+    if cat == DROP.ONESYNC_MISSED_FRAMES then return 'freeze', 'the game stopped responding' end
+    if cat == DROP.TIMED_OUT or cat == DROP.CLIENT_REPLACED then
+        return 'timeout', 'game killed or network cut (no crash report was sent)'
     end
-    if text:find('^%s*game crashed') then return 'crash' end
-    return 'quit'
+
+    if not cat then
+        -- An older server sends no category, so read the server-written texts instead.
+        -- A vanilla client cannot produce these: its own quit text starts with "Quit: ".
+        if startsWith(text, 'Server shutting down') then return 'server', 'server shutting down' end
+        if startsWith(text, 'Server->client connection timed out. Pending commands') then
+            return 'congestion', 'server-side network congestion'
+        end
+        if startsWith(text, 'Server->client connection timed out') or text == 'Reconnecting' then
+            return 'timeout', 'game killed or network cut (no crash report was sent)'
+        end
+        if startsWith(text, 'Timed out after 60 seconds') then return 'freeze', 'the game stopped responding' end
+    end
+
+    if startsWith(text, 'Quit: ') then
+        local rest = text:sub(7):lower()
+        for i = 1, #CRASH_PREFIXES do
+            if startsWith(text:sub(7), CRASH_PREFIXES[i]) then return 'fake_crash', 'typed a crash message into F8 quit' end
+        end
+        if rest:find('crash', 1, true) or rest:find('timed out', 1, true) then
+            return 'fake_crash', 'typed a crash message into F8 quit'
+        end
+        return 'quit', 'F8 quit with a custom message'
+    end
+
+    for i = 1, #CRASH_PREFIXES do
+        if startsWith(text, CRASH_PREFIXES[i]) then return 'crash', 'game crash reported by FiveM' end
+    end
+
+    if VOLUNTARY[text] or text == '' then return 'quit', 'left the game (F8 quit, Alt+F4, closed the game)' end
+
+    -- Any other text from the client: a non-fatal game error, or a modified client.
+    return 'error', 'game error'
 end
 
--- A genuine crash report is written by the CitizenFX crash handler, not typed. Anything
--- dressed as one but missing its shape — or sent while the player had just been shot,
--- was down, or was being revived — is treated as someone running from the fight.
-local function genuineCrashText(reason)
+-- A forged crash message from a modified client looks exactly like a real one, so only so
+-- many crashes in a fight are forgiven per player before they count as combat logs. Kept
+-- in resource KVP so it survives restarts, and read without yielding.
+local function crashAllowed(citizenid)
     local cfg = crashCfg()
-    local patterns = cfg.genuinePatterns
-    if type(patterns) ~= 'table' or #patterns == 0 then return true end
-    for i = 1, #patterns do
-        if reason:find(patterns[i]) then return true end
+    local allowance = tonumber(cfg.crashAllowance) or 2
+    if allowance <= 0 then return false end
+    if not citizenid then return true end
+
+    local key = 'rz_crashes:' .. citizenid
+    local windowMs = (tonumber(cfg.crashWindowHours) or 24) * 3600000
+    local now = RZ.Now()
+    local kept = {}
+    local ok, stored = pcall(json.decode, GetResourceKvpString(key) or '[]')
+    if ok and type(stored) == 'table' then
+        for i = 1, #stored do
+            local at = tonumber(stored[i])
+            if at and now - at < windowMs then kept[#kept + 1] = at end
+        end
     end
-    return false
+
+    local allowed = #kept < allowance
+    kept[#kept + 1] = now
+    SetResourceKvp(key, json.encode(kept))
+    return allowed
 end
 
+-- punish (bool), kind, why
 function CombatLog.Judge(source, record, reason, category)
-    local kind = CombatLog.Kind(reason, category)
+    local kind, why = CombatLog.Kind(reason, category)
     local cfg = crashCfg()
 
-    if kind == 'shutdown' then return false, kind, 'the server is shutting down' end
-    if kind == 'kicked' then
-        return cfg.punishKicks == true, kind, 'removed by the server or another resource'
-    end
-    if kind == 'quit' then return true, kind, 'left the game (F8 quit, closing the game)' end
-    if kind == 'timeout' then
-        return cfg.punishTimeouts ~= false, kind,
-            'connection dropped (game killed or network pulled — no crash report was sent)'
-    end
+    if cfg.enabled == false then return true, kind, 'crash check disabled: every leave counts' end
 
-    -- kind == 'crash'
-    if cfg.enabled == false then return false, kind, 'crash check disabled: every crash is trusted' end
-    if not genuineCrashText(reason) then
-        return true, 'fake_crash', 'the crash message is not in the form a real crash report takes'
+    if kind == 'quit' or kind == 'fake_crash' then return true, kind, why end
+    if kind == 'timeout' then return cfg.punishTimeouts ~= false, kind, why end
+    if kind == 'freeze' then return cfg.punishFreezes == true, kind, why end
+    if kind == 'crash' or kind == 'error' then
+        if not RZ.LootBag.WasInFight(record) then return false, kind, why end
+        if crashAllowed(record and record.citizenid) then return false, kind, why end
+        return true, 'repeat_crash', ('more than %d crash(es) mid-fight in %dh')
+            :format(tonumber(cfg.crashAllowance) or 2, tonumber(cfg.crashWindowHours) or 24)
     end
-    local state = record and record.state
-    if state == RZ.State.DOWNED or state == RZ.State.BEING_REVIVED then
-        return true, 'fake_crash', 'crashed while downed'
-    end
-    local window = tonumber(cfg.underFireSeconds) or 0
-    if window > 0 and secondsSince(record and record.lastHitAt) <= window then
-        return true, 'fake_crash', ('crashed within %ds of being shot'):format(window)
-    end
-    return false, kind, 'genuine game crash'
+    return false, kind, why
 end
 
 function RZ.Cleanup.Player(source, reason, category)

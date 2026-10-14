@@ -53,9 +53,8 @@ D.Elimination = { pruneAfterDays = 14 }
 D.LootBag = {
     zoneOnly = true, prop = 'prop_cs_heist_bag_01', slots = 5, maxWeight = 60000,
     crashCheck = {
-        enabled = true, underFireSeconds = 10,
-        punishTimeouts = true, punishKicks = false,
-        genuinePatterns = {},
+        enabled = true, punishTimeouts = true, punishFreezes = false,
+        crashAllowance = 2, crashWindowHours = 24,
     },
 }
 
@@ -94,6 +93,13 @@ D.Validation = {
         lootCrate      = { max = 4,  windowMs = 10000 },
         sellPackage    = { max = 6,  windowMs = 15000 },
         requestDowned  = { max = 10, windowMs = 10000 },
+        -- Admin menu: browsing tabs reads the dashboard, inspector and config each time.
+        adminOpen      = { max = 6,  windowMs = 10000 },
+        adminRead      = { max = 60, windowMs = 10000 },
+        adminDiag      = { max = 10, windowMs = 10000 },
+        adminValidate  = { max = 20, windowMs = 10000 },
+        adminPublish   = { max = 6,  windowMs = 10000 },
+        adminControl   = { max = 20, windowMs = 10000 },
     },
 }
 

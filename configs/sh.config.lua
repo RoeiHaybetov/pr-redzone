@@ -230,6 +230,21 @@ Config.LootBag = {
     takeWeaponsAnywhere = true,
 
     despawnMinutes = 10,
+
+    --- Leaving mid-fight is judged from how the game left. Quitting (F8 quit, Alt+F4, closing
+    --- the game) and faking a crash (typing a crash message into F8 quit, killing the game in
+    --- Task Manager, pulling the network) drop the bag and earn the lockout. A real game crash,
+    --- which FiveM reports itself, keeps both. Server kicks and restarts never count.
+    crashCheck = {
+        enabled = true,          -- false: every disconnect mid-fight counts, crash or not
+        punishTimeouts = true,   -- game killed / network pulled: no crash report was sent
+        punishFreezes = false,   -- the game froze and stopped answering (OneSync 60s timeout)
+
+        --- A cheat client can forge a crash report, so only this many real-looking crashes
+        --- in a fight are forgiven per player in the window; after that they count.
+        crashAllowance = 2,
+        crashWindowHours = 24,
+    },
 }
 
 -- ====== ACCESS =============================================================

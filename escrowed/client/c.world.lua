@@ -371,7 +371,14 @@ function Entities.SpawnSeller(zoneId)
     local hash = loadModel(cfg.model, 'ped')
     if not hash then return end
 
-    local ped = CreatePed(4, hash, cfg.coords.x, cfg.coords.y, cfg.coords.z, cfg.coords.w, false, false)
+    -- "Use my position" saves the ped's body-centre height and "Place in world" saves ground
+    -- height. The seller is frozen at spawn, so settle it on the ground either way or it floats.
+    local c = cfg.coords
+    local z = c.z + 0.0
+    local found, groundZ = GetGroundZFor_3dCoord(c.x + 0.0, c.y + 0.0, z + 0.5, false)
+    if found and groundZ and z - groundZ <= 1.5 then z = groundZ end
+
+    local ped = CreatePed(4, hash, c.x, c.y, z, c.w, false, false)
     SetModelAsNoLongerNeeded(hash)
     if not ped or ped == 0 then
         sellerPeds[zoneId] = nil
