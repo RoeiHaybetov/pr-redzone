@@ -50,7 +50,14 @@ D.Cooldown = {
 
 D.Elimination = { pruneAfterDays = 14 }
 
-D.LootBag = { zoneOnly = true, prop = 'prop_cs_heist_bag_01', slots = 5, maxWeight = 60000 }
+D.LootBag = {
+    zoneOnly = true, prop = 'prop_cs_heist_bag_01', slots = 5, maxWeight = 60000,
+    crashCheck = {
+        enabled = true, underFireSeconds = 10,
+        punishTimeouts = true, punishKicks = false,
+        genuinePatterns = {},
+    },
+}
 
 D.SoloSquads = {
     inviteExpirationSeconds = 30, inviteCooldownSeconds = 5,

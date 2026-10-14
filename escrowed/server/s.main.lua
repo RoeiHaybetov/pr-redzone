@@ -55,12 +55,106 @@ local function applyCombatLogCooldown(source, record, reason)
     RZ.Log.CombatLogCooldown(record.citizenid, zoneId, Config.Cooldown.minutes, reason)
 end
 
-function RZ.Cleanup.Player(source, reason)
+-- =============================================================================
+--  Combat log: a quit or a fake crash costs the bag; a genuine game crash does not.
+-- =============================================================================
+
+RZ.CombatLog = {}
+local CombatLog = RZ.CombatLog
+
+-- FXServer's drop category, the third playerDropped argument on current server builds.
+local DROP_CATEGORY = {
+    [1] = 'resource', [2] = 'client', [3] = 'server', [4] = 'replaced',
+    [5] = 'timeout', [6] = 'timeout', [7] = 'shutdown',
+    [8] = 'ratelimit', [9] = 'ratelimit', [10] = 'ratelimit', [11] = 'ratelimit',
+    [12] = 'timeout',
+}
+
+local function crashCfg()
+    return Config.LootBag.crashCheck or {}
+end
+
+local function secondsSince(ms)
+    if not ms then return math.huge end
+    return (RZ.Mono() - ms) / 1000
+end
+
+-- What kind of leave this was, from the drop category when the server build sends one and
+-- from the reason text otherwise. Returns 'crash' | 'timeout' | 'shutdown' | 'kicked' | 'quit'.
+function CombatLog.Kind(reason, category)
+    local text = type(reason) == 'string' and reason:lower() or ''
+    local cat = DROP_CATEGORY[tonumber(category) or -1]
+
+    if cat == 'shutdown' then return 'shutdown' end
+    if cat == 'timeout' or text:find('timed out', 1, true) then return 'timeout' end
+    if cat == 'resource' or cat == 'server' or cat == 'replaced' or cat == 'ratelimit' then
+        return 'kicked'
+    end
+    if text:find('^%s*game crashed') then return 'crash' end
+    return 'quit'
+end
+
+-- A genuine crash report is written by the CitizenFX crash handler, not typed. Anything
+-- dressed as one but missing its shape — or sent while the player had just been shot,
+-- was down, or was being revived — is treated as someone running from the fight.
+local function genuineCrashText(reason)
+    local cfg = crashCfg()
+    local patterns = cfg.genuinePatterns
+    if type(patterns) ~= 'table' or #patterns == 0 then return true end
+    for i = 1, #patterns do
+        if reason:find(patterns[i]) then return true end
+    end
+    return false
+end
+
+function CombatLog.Judge(source, record, reason, category)
+    local kind = CombatLog.Kind(reason, category)
+    local cfg = crashCfg()
+
+    if kind == 'shutdown' then return false, kind, 'the server is shutting down' end
+    if kind == 'kicked' then
+        return cfg.punishKicks == true, kind, 'removed by the server or another resource'
+    end
+    if kind == 'quit' then return true, kind, 'left the game (F8 quit, closing the game)' end
+    if kind == 'timeout' then
+        return cfg.punishTimeouts ~= false, kind,
+            'connection dropped (game killed or network pulled — no crash report was sent)'
+    end
+
+    -- kind == 'crash'
+    if cfg.enabled == false then return false, kind, 'crash check disabled: every crash is trusted' end
+    if not genuineCrashText(reason) then
+        return true, 'fake_crash', 'the crash message is not in the form a real crash report takes'
+    end
+    local state = record and record.state
+    if state == RZ.State.DOWNED or state == RZ.State.BEING_REVIVED then
+        return true, 'fake_crash', 'crashed while downed'
+    end
+    local window = tonumber(cfg.underFireSeconds) or 0
+    if window > 0 and secondsSince(record and record.lastHitAt) <= window then
+        return true, 'fake_crash', ('crashed within %ds of being shot'):format(window)
+    end
+    return false, kind, 'genuine game crash'
+end
+
+function RZ.Cleanup.Player(source, reason, category)
     local record = Store.Get(source)
 
     if reason ~= 'character unload' then
-        pcall(RZ.LootBag.OnDisconnect, source)
-        pcall(applyCombatLogCooldown, source, record, reason)
+        -- Everything up to the bag must run without yielding: ox_inventory unloads the
+        -- player's inventory in its own playerDropped handler, and any wait here lets it.
+        local punish, verdict, why = true, 'quit', nil
+        if record then punish, verdict, why = CombatLog.Judge(source, record, reason, category) end
+        if punish then
+            pcall(RZ.LootBag.OnDisconnect, source, verdict)
+            pcall(applyCombatLogCooldown, source, record, reason)
+        elseif record and RZ.LootBag.WasInFight(record) then
+            RZ.Log.LootBagSkip(source, 'disconnect', ('%s — kept their items (%s)'):format(verdict, why))
+        end
+        if record and verdict ~= 'quit' and RZ.LootBag.WasInFight(record) then
+            RZ.Log.Debug(('combat log: %s left as "%s": %s (reason: %s)')
+                :format(RZ.Log.Who(source), verdict, tostring(why), tostring(reason)))
+        end
     end
 
     RZ.Revive.CancelForReviver(source, 'reviver disconnected: ' .. reason)
@@ -78,17 +172,22 @@ function RZ.Cleanup.Player(source, reason)
     Store.Untrack(source)
 end
 
-AddEventHandler('playerDropped', function(reason)
+AddEventHandler('playerDropped', function(reason, _resourceName, clientDropReason)
     local src = source
     if type(src) == 'number' then
-        RZ.Cleanup.Player(src, tostring(reason))
+        RZ.Cleanup.Player(src, tostring(reason), clientDropReason)
     end
 end)
 
 AddEventHandler('QBCore:Server:OnPlayerUnload', function(source)
-    if type(source) == 'number' then
+    if type(source) ~= 'number' then return end
+    -- qb-core also fires this from inside its own playerDropped handler. Waiting a moment
+    -- lets a real disconnect be judged by playerDropped, with its reason, instead of being
+    -- mistaken for a character switch that quietly untracks the player first.
+    SetTimeout(500, function()
+        if GetPlayerName(source) == nil then return end
         RZ.Cleanup.Player(source, 'character unload')
-    end
+    end)
 end)
 
 function RZ.Sync.PushWorld(source)

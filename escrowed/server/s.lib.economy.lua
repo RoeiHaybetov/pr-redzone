@@ -549,10 +549,11 @@ function Bag.OnRespawn(source)
     Bag.Drop(source, coords, zoneId or snapshot.zoneId, 'respawn', snapshot)
 end
 
-function Bag.OnDisconnect(source)
+function Bag.OnDisconnect(source, verdict)
     if not Config.LootBag.onDisconnect then
         return skip(source, 'disconnect', 'Config.LootBag.onDisconnect is off')
     end
+    local trigger = (verdict and verdict ~= 'quit') and ('disconnect: ' .. verdict) or 'disconnect'
     local record = RZ.Store.Get(source)
     local zoneId, reason
 
@@ -567,9 +568,15 @@ function Bag.OnDisconnect(source)
     end
     local coords = RZ.Access.CoordsOf(source)
     if not coords then
-        return skip(source, 'disconnect', 'no live position (they were already gone)')
+        return skip(source, trigger, 'no live position (they were already gone)')
     end
-    Bag.Drop(source, coords, zoneId, 'disconnect')
+    if RZ.Inv.GetAllItems(source) == nil and RZ.Inv.Caps.drops then
+        RZ.Log.Integration('lootbag', ('%s left mid-fight but their inventory was already unloaded '
+            .. 'by the time this ran, so no bag could be taken — another resource unloaded it first.')
+            :format(RZ.Log.Who(source)))
+        return nil
+    end
+    Bag.Drop(source, coords, zoneId, trigger)
 end
 
 function Bag.StartExpiryLoop()
