@@ -244,13 +244,6 @@ function RZ.Cleanup.Player(source, reason, category)
         end
     end
 
-    RZ.Revive.CancelForReviver(source, 'reviver disconnected: ' .. reason)
-    if record then
-        RZ.Revive.CancelForTarget(source, 'target disconnected: ' .. reason)
-        RZ.Reboot.CancelForTarget(source, 'target disconnected: ' .. reason)
-    end
-    RZ.Reboot.Cancel(source, 'actor disconnected: ' .. reason)
-
     RZ.Lock.ReleaseAllOwnedBy(source)
     RZ.Rate.Clear(source)
     RZ.Gangs.Forget(source)
@@ -308,48 +301,17 @@ function RZ.Sync.PushWorldAll()
     end
 end
 
-function RZ.Sync.PushPeers()
-    local anyInZone = false
-    for _, record in pairs(Store.All()) do
-        if record.zoneId then anyInZone = true break end
-    end
-    if not anyInZone then return end
-
-    local byGroup = {}
-
-    for source, record in pairs(Store.All()) do
-        if record.zoneId and record.groupId then
-            local bucket = byGroup[record.groupId]
-            if not bucket then
-                bucket = { downed = {}, eliminated = {} }
-                byGroup[record.groupId] = bucket
-            end
-
-            if record.state == RZ.State.DOWNED or record.state == RZ.State.BEING_REVIVED then
-                bucket.downed[tostring(source)] = true
-            elseif record.state == RZ.State.ELIMINATED and record.deathId then
-                if RZ.Db.IsDeathPending(record.deathId) then
-                    bucket.eliminated[tostring(source)] = record.deathId
-                end
-            end
-        end
-    end
-
+-- The crate countdown, pushed to everyone in a zone every couple of seconds.
+function RZ.Sync.PushCrateTimers()
     local timerByZone = {}
 
     for source, record in pairs(Store.All()) do
-        if record.zoneId then
-            local bucket = record.groupId and byGroup[record.groupId] or nil
-
-            if timerByZone[record.zoneId] == nil then
-                timerByZone[record.zoneId] = RZ.Crate.GetTimerState(record.zoneId)
+        local zoneId = record.zoneId
+        if zoneId then
+            if timerByZone[zoneId] == nil then
+                timerByZone[zoneId] = RZ.Crate.GetTimerState(zoneId)
             end
-
-            TriggerClientEvent(RZ.Event.SYNC_WORLD, source, {
-                downedPeers = bucket and bucket.downed or {},
-                eliminatedPeers = bucket and bucket.eliminated or {},
-                crateTimer = timerByZone[record.zoneId],
-            })
+            TriggerClientEvent(RZ.Event.SYNC_WORLD, source, { crateTimer = timerByZone[zoneId] })
         end
     end
 end
@@ -375,8 +337,6 @@ local function wireSchedule()
             RZ.Crate.Reset(zoneId)
         else
             RZ.Log.Info(('zone %s closed — evacuating'):format(zoneId))
-            RZ.Revive.CancelAll('zone closed', zoneId)
-            RZ.Reboot.CancelAll('zone closed', zoneId)
             RZ.Crate.Reset(zoneId)
             RZ.Access.EvacuateZone(zoneId)
         end
@@ -384,13 +344,12 @@ local function wireSchedule()
         RZ.Sync.PushWorldAll()
     end)
 
-    RZ.Session.OnEnd(function(zoneId, endedSessionId)
+    RZ.Session.OnEnd(function(_zoneId, endedSessionId)
         -- Session ids are dates, so two zones open the same night share one. Only drop the
         -- squad roster locks once no zone is still running that night.
         if not RZ.Session.IsLiveAnywhere(endedSessionId) then
             RZ.Squads.ClearSnapshotsForSession(endedSessionId)
         end
-        RZ.Elimination.InvalidateSessionRecords(zoneId, endedSessionId)
         if RZ.AdminApply.QueueDue() then RZ.AdminApply.FlushDeferred() end
     end)
 
@@ -427,6 +386,7 @@ function RZ.Cleanup.Respawned(source, via)
     local zoneId = record.eliminationZoneId or record.zoneId
     if not zoneId then
         Store.ForceState(source, RZ.State.OUTSIDE, 'respawned with no elimination zone')
+        RZ.Elimination.Clear(record)
         return
     end
 
@@ -443,11 +403,8 @@ function RZ.Cleanup.Respawned(source, via)
         RZ.Notify(source, 'access.cooldown', { RZ.Util.FormatDuration(durationMs) }, 'error')
     end
 
-    RZ.Elimination.ForfeitOnRespawn(source, zoneId)
     RZ.LootBag.OnRespawn(source)
-    RZ.Knock.ClearPresentation(record)
-    record.eliminationZoneId = nil
-    record.eliminatedAt, record.elimSeenDead, record.elimKillResent, record.elimAliveSince = nil, nil, nil, nil
+    RZ.Elimination.Clear(record)
 end
 
 local function wireRespawn()
@@ -460,9 +417,9 @@ local function startMaintenance()
     CreateThread(function()
         while started do
             Wait(2000)
-            local ok, err = pcall(RZ.Sync.PushPeers)
+            local ok, err = pcall(RZ.Sync.PushCrateTimers)
             if not ok then
-                RZ.Log.Integration('sync', 'PushPeers error: ' .. tostring(err))
+                RZ.Log.Integration('sync', 'PushCrateTimers error: ' .. tostring(err))
             end
         end
     end)
@@ -473,7 +430,6 @@ local function startMaintenance()
             RZ.AdminSessions.Sweep()
             RZ.Squads.PruneInvites()
             RZ.Squads.CheckLeaderInactivity()
-            RZ.Elimination.ExpireStale()
             Wait(15000)
         end
     end)
@@ -482,14 +438,6 @@ local function startMaintenance()
         while started do
             Wait(Config.Cooldown.cleanupIntervalMs)
             RZ.Cooldowns.Prune()
-
-            if Config.Elimination.pruneAfterDays and Config.Elimination.pruneAfterDays > 0 then
-                local cutoff = RZ.Now() - (Config.Elimination.pruneAfterDays * 86400 * 1000)
-                local removed = RZ.Db.PruneOldDeaths(cutoff)
-                if removed > 0 then
-                    RZ.Log.Debug(('pruned %d old death record(s)'):format(removed))
-                end
-            end
         end
     end)
 end
@@ -520,41 +468,7 @@ function RZ.ValidateConfig()
 
             checkInside('crate', zone.crate.coords)
             checkInside('seller', zone.seller.coords)
-
-            for i, station in ipairs(zone.rebootStations) do
-                checkInside(('reboot station #%d'):format(i), station.propCoords)
-                checkInside(('reboot station #%d spawn'):format(i), station.playerSpawn)
-
-                if Config.Reboot.maxDistance <= station.interactionDistance then
-                    warn('reboot station #%d in "%s": Config.Reboot.maxDistance (%.1f) must be GREATER than interactionDistance (%.1f), or every reboot cancels immediately',
-                        i, zoneId, Config.Reboot.maxDistance, station.interactionDistance)
-                end
-
-                local spawnGap = RZ.Geo.Dist2D(
-                    vec3(station.playerSpawn.x, station.playerSpawn.y, station.playerSpawn.z),
-                    vec3(station.propCoords.x, station.propCoords.y, station.propCoords.z))
-                if spawnGap < 2.0 then
-                    warn('reboot station #%d in "%s": playerSpawn is only %.2fm from propCoords — the rebooted player will likely spawn inside the prop. Stand clear of it and re-capture with /redzone_here',
-                        i, zoneId, spawnGap)
-                end
-
-                if station.useExistingProp then
-                    RZ.Log.Info(('reboot station #%d in "%s" attaches to the EXISTING map prop "%s" — nothing is spawned.')
-                        :format(i, zoneId, tostring(station.prop)))
-                end
-            end
         end
-    end
-
-    local payload = RZ.Knock.BuildDownedPayload(Config.Knock.durationMs)
-    if type(payload.crawl) ~= 'table' or type(payload.crawl.dict) ~= 'string' then
-        warn('Config.Knock.crawl is missing or malformed — downed players will not be able to crawl')
-    end
-    if type(payload.crawlClipsets) ~= 'table' or #payload.crawlClipsets == 0 then
-        warn('Config.Knock.crawlClipsets is empty — there is no fallback if the crawl dictionary fails to load')
-    end
-    if type(payload.crawlSpeed) ~= 'number' or payload.crawlSpeed <= 0 then
-        warn('Config.Knock.crawlSpeed is missing or <= 0 — downed players would be unable to move')
     end
 
     for _, mat in ipairs(Config.Rewards.materials) do
@@ -614,7 +528,6 @@ local function boot()
     RZ.Squads.LoadAll()
     RZ.Squads.PruneStaleSnapshots()
     RZ.Cooldowns.LoadAll()
-    RZ.Elimination.ReconcilePending()
 
     local okValidate, errValidate = pcall(RZ.ValidateConfig)
     if not okValidate then
@@ -626,9 +539,6 @@ local function boot()
     wireRespawn()
 
     RZ.Access.StartValidationLoop()
-    RZ.Knock.StartTimerLoop()
-    RZ.Revive.StartWatchdog()
-    RZ.Reboot.StartWatchdog()
     RZ.Crate.StartLoop()
     RZ.LootBag.StartExpiryLoop()
     startMaintenance()
@@ -652,25 +562,10 @@ AddEventHandler('onResourceStop', function(resourceName)
     started = false
 
     RZ.Access.StopValidationLoop()
-    RZ.Knock.StopTimerLoop()
-    RZ.Revive.StopWatchdog()
-    RZ.Reboot.StopWatchdog()
     RZ.Crate.StopLoop()
     RZ.LootBag.StopExpiryLoop()
 
     RZ.LootBag.RemoveAll()
-
-    RZ.Revive.CancelAll('resource stopping')
-    RZ.Reboot.CancelAll('resource stopping')
-
-    for source, record in pairs(Store.All()) do
-        if record.state == RZ.State.DOWNED or record.state == RZ.State.BEING_REVIVED then
-            RZ.Medical.ExitRedZoneDowned(source)
-            RZ.Medical.ClearDeathState(source)
-        end
-        TriggerClientEvent(RZ.Event.RESTORE, source, { health = Config.Revive.revivedHealth })
-        TriggerClientEvent(RZ.Event.SET_DOWNED, source, false)
-    end
 
     RZ.AdminSessions.DestroyAll()
     RZ.AdminApply.ClearZoneOverrides()
@@ -799,9 +694,6 @@ if Config.Debug then
             if blocked then
                 reply(source, ('YOU: BLOCKED because your job is "%s"'):format(tostring(jobName)))
             end
-
-            reply(source, ('YOU: knock threshold=%d downedHealth=%d — take damage below the threshold to be downed')
-                :format(Config.Knock.lethalThreshold, Config.Knock.downedHealth))
         end
     end)
 

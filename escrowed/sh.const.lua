@@ -5,7 +5,7 @@ RZ.RESOURCE = GetCurrentResourceName()
 if not RZ.Defaults then
     local where = IsDuplicityVersion and IsDuplicityVersion() and 'server' or 'client'
     print(('^1[pr-redzone] FATAL (%s): escrowed/sh.defaults.lua did not load.^7'):format(where))
-    print('^1  Every optional setting is missing. Revives, zone boundaries and the^7')
+    print('^1  Every optional setting is missing. Cooldowns, zone boundaries and the^7')
     print('^1  validation loop will all misbehave in unrelated-looking ways.^7')
     print('^3  Fix: run "refresh" then "restart pr-redzone" (adding a file to^7')
     print('^3  fxmanifest requires refresh; restart alone keeps the cached manifest).^7')
@@ -14,29 +14,20 @@ end
 RZ.STATE_BAG = 'rzState'
 
 RZ.State = {
-    OUTSIDE = 'outside', ALIVE = 'alive', DOWNED = 'downed',
-    BEING_REVIVED = 'being_revived', ELIMINATED = 'eliminated',
-    RESPAWN_BLOCKED = 'respawn_blocked', BEING_REBOOTED = 'being_rebooted',
+    OUTSIDE = 'outside', ALIVE = 'alive',
+    ELIMINATED = 'eliminated', RESPAWN_BLOCKED = 'respawn_blocked',
 }
 
 local S = RZ.State
 
 RZ.Transitions = {
     [S.OUTSIDE] = { [S.ALIVE] = true, [S.RESPAWN_BLOCKED] = true },
-    [S.ALIVE] = { [S.OUTSIDE] = true, [S.DOWNED] = true, [S.ELIMINATED] = true },
-    [S.DOWNED] = { [S.BEING_REVIVED] = true, [S.ELIMINATED] = true, [S.ALIVE] = true, [S.OUTSIDE] = true },
-    [S.BEING_REVIVED] = { [S.DOWNED] = true, [S.ALIVE] = true, [S.ELIMINATED] = true, [S.OUTSIDE] = true },
-    [S.ELIMINATED] = { [S.RESPAWN_BLOCKED] = true, [S.BEING_REBOOTED] = true, [S.ALIVE] = true, [S.OUTSIDE] = true },
-    [S.RESPAWN_BLOCKED] = { [S.BEING_REBOOTED] = true, [S.OUTSIDE] = true, [S.ALIVE] = true },
-    [S.BEING_REBOOTED] = { [S.ALIVE] = true, [S.ELIMINATED] = true, [S.RESPAWN_BLOCKED] = true, [S.OUTSIDE] = true },
+    [S.ALIVE] = { [S.OUTSIDE] = true, [S.ELIMINATED] = true },
+    [S.ELIMINATED] = { [S.RESPAWN_BLOCKED] = true, [S.ALIVE] = true, [S.OUTSIDE] = true },
+    [S.RESPAWN_BLOCKED] = { [S.OUTSIDE] = true, [S.ALIVE] = true },
 }
 
 RZ.CountsForControl = { [S.ALIVE] = true }
-
-RZ.DeathStatus = {
-    PENDING = 'pending', ACQUIRED = 'acquired',
-    REBOOTED = 'rebooted', EXPIRED = 'expired',
-}
 
 RZ.Reject = {
     ZONE_CLOSED = 'zone_closed', NO_GANG = 'no_gang', SOLO = 'solo',
@@ -62,29 +53,16 @@ RZ.Local = {
 }
 
 RZ.Callback = {
-    REQUEST_DOWNED  = NS .. ':sv:requestDowned',
-    BEGIN_REVIVE    = NS .. ':sv:beginRevive',
-    COMPLETE_REVIVE = NS .. ':sv:completeRevive',
-    CANCEL_REVIVE   = NS .. ':sv:cancelRevive',
-    ACQUIRE_HEAD    = NS .. ':sv:acquireDna',
-    LIST_DNA        = NS .. ':sv:listDna',
-    BEGIN_REBOOT    = NS .. ':sv:beginReboot',
-    COMPLETE_REBOOT = NS .. ':sv:completeReboot',
-    CANCEL_REBOOT   = NS .. ':sv:cancelReboot',
-    LOOT_CRATE      = NS .. ':sv:lootCrate',
-    SELL_PACKAGE    = NS .. ':sv:sellPackage',
-    SYNC_REQUEST    = NS .. ':sv:syncRequest',
+    LOOT_CRATE   = NS .. ':sv:lootCrate',
+    SELL_PACKAGE = NS .. ':sv:sellPackage',
+    SYNC_REQUEST = NS .. ':sv:syncRequest',
 }
 
 RZ.Event = {
     SYNC_WORLD    = NS .. ':cl:syncWorld',
     SYNC_SELF     = NS .. ':cl:syncSelf',
-    SET_DOWNED    = NS .. ':cl:setDowned',
     FORCE_EJECT   = NS .. ':cl:forceEject',
     NOTIFY        = NS .. ':cl:notify',
-    KILL_LOCAL    = NS .. ':cl:killLocal',
-    RESTORE       = NS .. ':cl:restore',
-    CANCEL_ACTION = NS .. ':cl:cancelAction',
     COOLDOWN_BURN = NS .. ':cl:cooldownBurn',
     SYNC_BAGS     = NS .. ':cl:syncBags',
     CONFIG_SYNC   = NS .. ':cl:configSync',

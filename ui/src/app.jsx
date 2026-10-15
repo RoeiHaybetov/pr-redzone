@@ -1,5 +1,5 @@
 import { Component } from 'react'
-import { CrateHud, KnockHud, CprHud, InviteToast } from './hud'
+import { CrateHud, InviteToast } from './hud'
 import SquadPanel from './squad'
 import AdminPanel from './admin/Panel'
 import { post } from './lib'
@@ -28,8 +28,6 @@ class Boundary extends Component {
 
 const SURFACES = [
   ['crate', CrateHud],
-  ['knock', KnockHud],
-  ['cpr', CprHud],
   ['invite toast', InviteToast],
   ['squad panel', SquadPanel, 'close'],
   ['admin panel', AdminPanel, 'rzAdminClose'],

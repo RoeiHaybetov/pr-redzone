@@ -4,13 +4,6 @@ RZ.Access = {}
 local Access = RZ.Access
 local Store = RZ.Store
 
-local IN_FLOW = {
-    [RZ.State.DOWNED]         = true,
-    [RZ.State.BEING_REVIVED]  = true,
-    [RZ.State.ELIMINATED]     = true,
-    [RZ.State.BEING_REBOOTED] = true,
-}
-
 local REJECT_NOTIFY = {
     [RZ.Reject.SOLO]                    = 'access.solo_denied',
     [RZ.Reject.NO_GANG]                 = 'access.gang_only',
@@ -392,13 +385,9 @@ function Access.Evaluate(source)
         record.ejectCount = 0
         clearBurn(record)
 
-        -- A downed player who crawls over the line, or a corpse that ragdolls across it, is
-        -- still in that zone's fight: keep the zone so the bleed-out, revive, DNA and reboot
-        -- all still resolve. Dropping it here used to strand them downed forever.
-        if IN_FLOW[record.state] then
-            if record.zoneId then RZ.Knock.ServerHealthWatch(source, record, record.zoneId) end
-            return
-        end
+        -- A body that ragdolls over the line is still that zone's death: keep the zone so
+        -- the respawn lockout and the loot bag still resolve.
+        if record.state == RZ.State.ELIMINATED then return end
 
         record.gangId = nil
         record.groupId = nil
@@ -407,8 +396,8 @@ function Access.Evaluate(source)
             Store.SetZone(source, nil)
             RZ.Sync.PushWorld(source)
         end
-        -- RESPAWN_BLOCKED stays as it is out here: a teammate may still be carrying their
-        -- DNA to a station. The in-zone gate below lets them back in once allowed.
+        -- RESPAWN_BLOCKED stays as it is out here; the in-zone gate below lets them back in
+        -- once the lockout allows it.
         if record.state == RZ.State.ALIVE then
             Store.SetState(source, RZ.State.OUTSIDE, 'left zone')
         end
@@ -416,9 +405,6 @@ function Access.Evaluate(source)
     end
 
     if not RZ.Schedule.IsOpen(zoneId) then
-        if IN_FLOW[record.state] then
-            RZ.Knock.ReleaseForIneligibility(source, RZ.Reject.ZONE_CLOSED)
-        end
         if record.zoneId ~= nil then Store.SetZone(source, nil) end
         if record.state == RZ.State.ALIVE or record.state == RZ.State.RESPAWN_BLOCKED then
             Store.SetState(source, RZ.State.OUTSIDE, 'zone closed')
@@ -434,9 +420,6 @@ function Access.Evaluate(source)
     local eligible, reason, _, cooldownRemaining = Access.CheckEligibility(source, zoneId)
 
     if not eligible then
-        if IN_FLOW[record.state] then
-            RZ.Knock.ReleaseForIneligibility(source, reason)
-        end
         local burn = Config.Cooldown.damage
         if reason == RZ.Reject.COOLDOWN and burn and burn.enabled and not burn.ejectInstead then
             Access.ApplyCooldownBurn(source, record, zoneId, cooldownRemaining)
@@ -455,14 +438,14 @@ function Access.Evaluate(source)
     record.groupType = group and group.type or nil
 
     -- Only a living ped joins the fight. A body carried or ragdolled in from outside stays a
-    -- spectator until it is alive, so death outside the zone can never become a free knock.
+    -- spectator until it is alive, so a death outside the zone never counts as one in it.
     if (record.state == RZ.State.OUTSIDE or record.state == RZ.State.RESPAWN_BLOCKED)
         and pedAlive(source) then
         Store.SetState(source, RZ.State.ALIVE, 'entered zone')
         RZ.Sync.PushWorld(source)
+    elseif record.state == RZ.State.ALIVE then
+        RZ.Elimination.WatchAlive(source, record, zoneId)
     end
-
-    RZ.Knock.ServerHealthWatch(source, record, zoneId)
 end
 
 local tickRunning = false
@@ -530,10 +513,8 @@ function Access.EvacuateZone(zoneId)
 
     for source, record in pairs(Store.All()) do
         if record.zoneId == zoneId then
-            if IN_FLOW[record.state] then
-                RZ.Knock.ReleaseForIneligibility(source, RZ.Reject.ZONE_CLOSED)
-            end
-
+            RZ.Elimination.Clear(record)
+            RZ.LootBag.ClearSnapshot(source)
             RZ.Notify(source, 'zone.closed_broadcast', nil, 'inform')
             released = released + 1
 

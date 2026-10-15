@@ -14,9 +14,7 @@ D.Logging = {
     useQbxLogger = true,
     events = {
         invalidEntry = true, repeatedEntry = true,
-        downed = true, reviveStarted = true, reviveCancelled = true, reviveSuccess = true,
-        elimination = true, respawnCooldown = true, dnaAcquired = true, dnaDuplicate = true,
-        rebootStarted = true, rebootCancelled = true, rebootSuccess = true,
+        elimination = true, respawnCooldown = true,
         crateSpawn = true, crateLooted = true, packageSold = true,
         rewardsGranted = true, cardGranted = true, suspicious = true, integrationError = true,
         squadCreated = true, squadInvite = true, squadJoin = true, squadLeave = true,
@@ -30,25 +28,10 @@ D.Gangs = {
     soloGangs = { 'solo' }, notGangs = { 'none', 'unemployed', 'unemployed2' },
 }
 
-D.Knock = {
-    finishThreshold = 5,
-    crawl = {
-        dict = 'move_crawl', forward = 'onfront_fwd', backward = 'onfront_bwd',
-        idleDict = 'combat@damage@writhe', idleClip = 'writhe_loop', turnRate = 1.5,
-    },
-    crawlClipsets = { 'move_injured_ground', 'move_m@injured' },
-}
-
-D.Revive = { watchdogGraceMs = 3000, minigame = { control = 22, maxConsecutiveMisses = 6 } }
-
-D.Reboot = { watchdogGraceMs = 3000 }
-
 D.Cooldown = {
     cleanupIntervalMs = 300000,
     damage = { warnIntervalMs = 3000, ejectAfterIgnoredTicks = 3 },
 }
-
-D.Elimination = { pruneAfterDays = 14 }
 
 D.LootBag = {
     zoneOnly = true, prop = 'prop_cs_heist_bag_01', slots = 5, maxWeight = 60000,
@@ -60,7 +43,7 @@ D.LootBag = {
 
 D.SoloSquads = {
     inviteExpirationSeconds = 30, inviteCooldownSeconds = 5,
-    persistSquads = true, dnaExpiresAtSessionEnd = true,
+    persistSquads = true,
     allowMaterialsReward = true, allowKeycardReward = true,
     autoTransferLeaderAfterMinutes = 0,
     name = { minLength = 3, maxLength = 24, renameLimit = 3, renameWindowMs = 60000 },
@@ -81,18 +64,11 @@ D.Schedule = { utcOffset = 0, pollIntervalMs = 15000, alwaysOpenInDebug = true }
 
 D.Validation = {
     intervalMs = 750, ejectRetries = 3, ejectRetryDelayMs = 1500,
-    ejectCooldownMs = 4000, completionToleranceMs = 350,
+    ejectCooldownMs = 4000,
     rateLimits = {
         default        = { max = 8,  windowMs = 10000 },
-        beginRevive    = { max = 6,  windowMs = 10000 },
-        completeRevive = { max = 6,  windowMs = 10000 },
-        acquireDna     = { max = 4,  windowMs = 10000 },
-        listDna        = { max = 10, windowMs = 10000 },
-        beginReboot    = { max = 4,  windowMs = 15000 },
-        completeReboot = { max = 4,  windowMs = 15000 },
         lootCrate      = { max = 4,  windowMs = 10000 },
         sellPackage    = { max = 6,  windowMs = 15000 },
-        requestDowned  = { max = 10, windowMs = 10000 },
         -- Admin menu: browsing tabs reads the dashboard, inspector and config each time.
         adminOpen      = { max = 6,  windowMs = 10000 },
         adminRead      = { max = 60, windowMs = 10000 },
@@ -132,8 +108,6 @@ local ZONE = {
         interactionDistance = 2.0,
     },
 }
-
-local STATION = { prop = 'ex_prop_crate_elec_bc', useExistingProp = false, interactionDistance = 4.0 }
 
 local function isList(t)
     return next(t) ~= nil and t[1] ~= nil
@@ -178,7 +152,8 @@ function RZ.Defaults.ApplyZone(zone)
 
     fill(zone, ZONE)
 
-    for _, station in ipairs(zone.rebootStations or {}) do fill(station, STATION) end
+    -- Reboot stations were removed; older saved zones may still carry them.
+    zone.rebootStations = nil
 
     zone.crate.rewardItem = zone.crate.rewardItem
         or zone.package
@@ -221,14 +196,7 @@ function RZ.Defaults.StripZone(zone)
 
     local minimal = strip(zone, ZONE)
 
-    if type(zone.rebootStations) == 'table' then
-        local stations = {}
-        for i = 1, #zone.rebootStations do
-            stations[i] = strip(zone.rebootStations[i], STATION)
-        end
-        minimal.rebootStations = stations
-    end
-
+    minimal.rebootStations = nil
     minimal.center, minimal.radius, minimal.bounds, minimal.__needsShape = nil, nil, nil, nil
 
     minimal.points = zone.points

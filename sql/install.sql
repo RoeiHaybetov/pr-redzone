@@ -4,7 +4,7 @@
 --
 --  Idempotent. Safe to run repeatedly and safe to run on a live database.
 --
---  The resource creates these same tables at boot (Db.EnsureSchema for the six
+--  The resource creates these same tables at boot (Db.EnsureSchema for the five
 --  gameplay tables, Db.EnsureAdminSchema for the three admin tables). This file
 --  is the reviewable, version-controlled copy of that DDL — keep the two in sync.
 --
@@ -24,6 +24,12 @@
 --      RENAME TABLE `aba_redzone_config_history` TO `redzone_config_history`;
 --      RENAME TABLE `aba_redzone_admin_audit`    TO `redzone_admin_audit`;
 -- -----------------------------------------------------------------------------
+--  OPTIONAL CLEANUP — the knock / revive / DNA / reboot system was removed, and
+--  with it the `redzone_deaths` table. Nothing reads it any more. Drop it if you
+--  like; leaving it in place does no harm.
+--
+--      DROP TABLE IF EXISTS `redzone_deaths`;
+-- -----------------------------------------------------------------------------
 
 
 -- RedZone entry lockouts. The deadline is stored ABSOLUTE, not as a countdown, so a
@@ -36,39 +42,6 @@ CREATE TABLE IF NOT EXISTS `redzone_cooldowns` (
     `updated_at` BIGINT      NOT NULL COMMENT 'epoch milliseconds',
     PRIMARY KEY (`citizenid`, `zone_id`),
     KEY `idx_redzone_cooldowns_expires` (`expires_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-
--- Elimination records — the single source of truth for teammate DNA. The item is only
--- a pointer: it is valid solely while a row here carries its serial in the right status,
--- so a duplicated, edited or hand-crafted item fails validation at the reboot station.
--- `gang_id` holds the full combat group id (`gang:<id>` or `solo_squad:<session>:<squad>`);
--- the session embedded in the solo form is why a head from a previous night can never
--- authorise a reboot today. UNIQUE on `item_serial` makes two items claiming the same
--- serial impossible at the database level, not merely in Lua.
-CREATE TABLE IF NOT EXISTS `redzone_deaths` (
-    `death_id`    VARCHAR(96)  NOT NULL,
-    `citizenid`   VARCHAR(64)  NOT NULL COMMENT 'the eliminated player',
-    `license`     VARCHAR(128) NULL     COMMENT 'server-side only, never sent to a client',
-    `char_name`   VARCHAR(128) NOT NULL,
-    `gang_id`     VARCHAR(64)  NOT NULL COMMENT 'combat group id (gang:... or solo_squad:...)',
-    `zone_id`     VARCHAR(64)  NOT NULL,
-    `pos_x`       DOUBLE       NOT NULL,
-    `pos_y`       DOUBLE       NOT NULL,
-    `pos_z`       DOUBLE       NOT NULL,
-    `status`      VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending|acquired|rebooted|expired',
-    `item_serial` VARCHAR(96)  NULL,
-    `acquired_by` VARCHAR(64)  NULL,
-    `created_at`  BIGINT       NOT NULL,
-    `acquired_at` BIGINT       NULL,
-    `rebooted_at` BIGINT       NULL,
-    `expires_at`  BIGINT       NULL,
-    PRIMARY KEY (`death_id`),
-    UNIQUE KEY `uniq_redzone_deaths_serial` (`item_serial`),
-    KEY `idx_redzone_deaths_status` (`status`),
-    KEY `idx_redzone_deaths_citizen` (`citizenid`),
-    KEY `idx_redzone_deaths_zone_status` (`zone_id`, `status`),
-    KEY `idx_redzone_deaths_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 

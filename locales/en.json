@@ -24,54 +24,6 @@
     "option": "Loot Bag",
     "open_failed": "That bag could not be opened."
   },
-  "knock": {
-    "downed": "You are down! %s to bleed out.",
-    "hud_title": "BLEEDING OUT",
-    "hud_reviving": "BEING REVIVED",
-    "hud_hint": "Your team can still save you",
-    "eliminated": "You were eliminated in the RedZone."
-  },
-  "revive": {
-    "option": "Revive Gang Member",
-    "started": "Reviving your teammate...",
-    "progress": "Reviving teammate",
-    "cancelled": "The revive was interrupted.",
-    "success": "You revived your teammate.",
-    "wpr_revived": "You were revived by your team.",
-    "not_downed": "That player is not down.",
-    "wrong_gang": "That player is not on your team.",
-    "too_far": "You moved too far away.",
-    "already_busy": "Someone else is already reviving that player.",
-    "cpr_failed": "CPR failed — only %s%% of compressions were in rhythm.",
-    "self": "You cannot revive yourself.",
-    "target_cooldown": "That player is locked out of the RedZone and cannot be revived."
-  },
-  "dna": {
-    "option": "Acquire Teammate DNA",
-    "acquired": "You collected %s's head.",
-    "already_acquired": "That head has already been collected.",
-    "wrong_gang": "That elimination does not belong to your team.",
-    "too_far": "You are too far from the body.",
-    "invalid": "That elimination record is no longer valid.",
-    "inventory_full": "You do not have room for that.",
-    "expired": "That elimination record has expired."
-  },
-  "reboot": {
-    "option": "Reboot Teammate",
-    "menu_title": "Reboot a Teammate",
-    "menu_entry": "%s",
-    "menu_entry_desc": "Eliminated %s ago",
-    "no_dna": "You are not carrying any usable teammate DNAs.",
-    "progress": "Rebooting teammate",
-    "started": "Rebooting %s...",
-    "cancelled": "The reboot was interrupted.",
-    "success": "%s has been rebooted.",
-    "wpr_rebooted": "Your team rebooted you back into the RedZone.",
-    "target_offline": "That teammate is not online.",
-    "invalid_item": "That teammate DNA is not valid.",
-    "already_used": "That elimination has already been resolved.",
-    "target_not_eligible": "That teammate cannot be rebooted right now."
-  },
   "crate": {
     "option": "Loot Supply Crate",
     "available": "A supply crate has dropped in the RedZone.",
@@ -183,5 +135,8 @@
     "too_far": "You are too far away.",
     "rate_limited": "Slow down.",
     "locked": "That action is already in progress."
+  },
+  "death": {
+    "eliminated": "You died in the RedZone."
   }
 }

@@ -13,11 +13,9 @@ open it on a timer, and let gangs fight over a loot crate they have to hold grou
   corner, and that shape *is* the zone — membership, ejection, walls and the map blip all
   follow the ring you drew. No coordinates to type, no radius to guess.
 - **A schedule.** Each zone opens and closes on its own hours, in its own timezone.
-- **Custom knock and revive.** Taking lethal damage inside the zone puts you on the ground
-  crawling with a server-timed bleed-out instead of killing you. A teammate picks you up with
-  a CPR rhythm minigame the server scores.
-- **Elimination and reboot.** Run out of time and you are out — unless a teammate takes DNA
-  from your corpse and carries it to a reboot station inside the zone.
+- **Plain deaths.** Dying inside the zone is a normal death, handled by your own death /
+  ambulance script. The RedZone only notes it: respawn and you are out of the fight; get
+  picked back up where you fell (EMS, a medkit) and you are still in it.
 - **A contested crate.** It only counts down while exactly one combat group holds the zone.
   Loot it, carry the package to a hidden seller, get paid in materials and a chance at a
   keycard.
@@ -67,7 +65,7 @@ eliminated players keep their items.
 
 **1. Copy the folder** to `resources/[custom]/pr-redzone`.
 
-**2. Import the database.** Run `sql/install.sql`. It creates nine tables, all
+**2. Import the database.** Run `sql/install.sql`. It creates eight tables, all
 `CREATE TABLE IF NOT EXISTS`, so it is safe to re-run.
 
 > Upgrading from the old resource name? The top of `install.sql` carries a commented-out
@@ -75,8 +73,7 @@ eliminated players keep their items.
 > `CREATE` statements to keep your saved configuration, history and audit log.
 
 **3. Add the items.** See `install/items.md` — it lists exactly what to paste into
-`ox_inventory/data/items.lua` (or `qb-core/shared/items.lua`). `teammate_dna` **must** be
-unique and non-stackable, or two eliminations collapse into one item.
+`ox_inventory/data/items.lua` (or `qb-core/shared/items.lua`).
 
 **4. `server.cfg`.** Start it after your framework, `ox_lib`, `oxmysql`, `ox_inventory` and
 your targeting resource:
@@ -128,8 +125,8 @@ Six tabs.
 | tab | what lives there |
 |---|---|
 | **Overview** | live zone state, the player inspector, health checks, maintenance actions, the Discord webhook |
-| **Zones** | one card per zone — shape, hours, crate, seller, reboot stations, map blip — plus force open/close, crate controls, and the creation wizard |
-| **Combat** | knock, revive, CPR, reboot, elimination, cooldown, loot bags |
+| **Zones** | one card per zone — shape, hours, crate, seller, map blip — plus force open/close, crate controls, and the creation wizard |
+| **Combat** | lockout, lockout burn, loot bags |
 | **Economy** | items and the seller payout |
 | **Players** | Solo Squads and blocked jobs |
 | **Server** | HUD, schedule, security, logging, history and rollback, import/export |
@@ -226,8 +223,7 @@ All three access settings are also editable live under Players → Gang access.
 **Debug** — registered only while `Config.Debug = true`, and gated on `pr_redzone.admin`:
 
 `/redzone_here` · `/redzone_status` · `/redzone_timetest` · `/redzone_testbag` ·
-`/redzone_clearcooldown` · `/redzone_testmodel` · `/redzone_testanim` ·
-`/redzone_findcrawl` · `/redzone_testclip`
+`/redzone_clearcooldown` · `/redzone_testmodel`
 
 ---
 
@@ -254,22 +250,11 @@ and Barlow fonts (`@fontsource/rajdhani`, `@fontsource/barlow`), bundled into `u
 
 ## How a few things work
 
-**The knock system never lets the ped die.** A weapon hit that would take a player inside an
-open zone to or below `lethalThreshold` is stopped on the server before it lands, and the
-player goes down instead — so GTA never reaches its death state and the medical resource's
-last stand never starts. Damage that is not a weapon hit (falls, vehicles, explosions) is
-caught by the client report and a server watchdog; if the death resource grabs the player
-anyway, the knock takes them back. The first second after going down absorbs every hit, so
-one burst cannot knock and finish in the same instant.
-
-**Eliminated players always come back clean.** Whether they respawn, get revived by EMS or an
-admin, or their death script has no respawn hook at all, the server notices the ped is alive
-again, applies the lockout, and returns them to normal — so they can be knocked again next
-time.
-
-**The CPR minigame is scored server-side.** The client reports which beats it hit; the server
-computes how many beats there should have been from its own clock and refuses an inflated
-claim. Failing resumes the casualty's bleed-out from exactly where it paused.
+**Deaths are read, not handled.** Your death script (or plain GTA) owns the death. The server
+notices a player inside an open zone has died (dead or in last stand), notes what they carried
+and where they fell, and waits. Respawn anywhere else and the lockout starts and the bag drops
+where they died. Get picked back up within a few metres of that spot, still inside the zone,
+and they are simply back in the fight — no lockout, no bag.
 
 **Loot bags use `ox_inventory`'s own drop.** Not a prop with a fake inventory bolted on — a
 real drop, so it works with every inventory feature your players already know.
@@ -291,16 +276,11 @@ logs. All of it is under `Config.LootBag.crashCheck` and Combat → Loot bag in 
 bag is taken in the very first moment of the disconnect, before `ox_inventory` unloads the
 player's inventory.
 
-**DNA is taken from the corpse, not from a dropped prop.** Respawn and you forfeit it. An
-unclaimed record expires on the same clock as the item, so a sample can never outlive the
-record behind it.
-
 **Ejection is polygon-accurate.** A player outside the ring is pushed to the nearest edge
 plus a padding, with a cooldown between attempts so they never bounce along the boundary.
 
 **Combat groups.** A gang is a group. A Solo Squad is a group, keyed to the session it was
-locked in. Group identity is what the crate timer counts, what teammate checks read, and what
-gets written next to every elimination.
+locked in. Group identity is what the crate timer counts and what teammate checks read.
 
 ---
 

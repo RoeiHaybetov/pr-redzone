@@ -99,7 +99,6 @@ export default function Overview() {
                   <StatLine label="Session" value={z.sessionId || '—'} />
                   <StatLine label="Players inside" value={z.players} />
                   <StatLine label="Alive groups" value={z.aliveGroups} />
-                  <StatLine label="Downed" value={z.downed} />
                   <StatLine label="Eliminated" value={z.eliminated} />
                   <StatLine label="Blocked" value={z.blocked} />
                   <StatLine label="Crate" value={z.crateActive ? 'ACTIVE' : (z.crateRunning ? 'counting down' : 'paused')} />

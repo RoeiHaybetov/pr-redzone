@@ -91,9 +91,7 @@
 }
 .rz-dot-online.is-on { background: var(--primary); }
 
-.rz-crate,
-.rz-knock,
-.rz-cpr { pointer-events: none; }
+.rz-crate { pointer-events: none; }
 
 .rz-num { font-variant-numeric: tabular-nums; }
 
@@ -144,13 +142,9 @@
   color: var(--text-dim);
 }
 
-.rz-crate-title i,
-.rz-knock-title i,
-.rz-cpr-title i { color: var(--chrome); margin-right: 6px; }
+.rz-crate-title i { color: var(--chrome); margin-right: 6px; }
 
 .rz-crate-title i { font-size: calc(10px * var(--rz-scale, 1)); }
-.rz-knock-title i { font-size: 10px; }
-.rz-cpr-title  i { font-size: 9px; }
 
 .rz-crate-time {
   min-width: calc(62px * var(--rz-scale, 1));
@@ -178,223 +172,6 @@
 
 .rz-crate.is-empty { opacity: 0.72; }
 .rz-crate.is-empty .rz-crate-bar span { background: rgba(255, 255, 255, 0.2); }
-
-.rz-knock {
-  position: fixed;
-  bottom: 92px;
-  left: 50%;
-  width: 120px;
-  height: 120px;
-  transform: translateX(-50%);
-  animation: rzRise 0.3s var(--ease-out);
-}
-
-@keyframes rzRise {
-  from { opacity: 0; transform: translateX(-50%) translateY(14px) scale(0.94); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-}
-
-.rz-ring { width: 120px; height: 120px; transform: rotate(-90deg); }
-.rz-ring circle {
-  fill: var(--dark-mix);
-  stroke-width: 4;
-  stroke-linecap: round;
-}
-.rz-ring-track { stroke: rgba(255, 255, 255, 0.1); }
-.rz-ring-fill {
-  fill: none;
-  stroke: var(--danger);
-  stroke-dasharray: 326.7;
-  transition: stroke-dashoffset 0.25s linear, stroke var(--transition);
-}
-
-.rz-knock-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-}
-
-.rz-knock-time {
-  font-size: 34px;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--text-white);
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
-  transition: color var(--transition);
-}
-
-.rz-knock-unit {
-  font-size: 8.5px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  color: var(--text-dim);
-}
-
-.rz-knock-label {
-  position: absolute;
-  top: 126px;
-  left: 50%;
-  transform: translateX(-50%);
-  text-align: center;
-  white-space: nowrap;
-}
-
-.rz-knock-title {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--danger);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
-}
-
-.rz-knock-hint {
-  display: block;
-  margin-top: 3px;
-  font-size: 10.5px;
-  color: var(--text-grey);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
-}
-
-.rz-knock.is-critical .rz-knock-time { color: var(--danger); }
-
-.rz-knock.is-paused .rz-ring-fill   { stroke: var(--primary); }
-.rz-knock.is-paused .rz-knock-title { color: var(--primary); }
-
-.rz-cpr {
-  position: fixed;
-  bottom: 76px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 30px;
-  animation: rzRise 0.25s var(--ease-out);
-}
-
-.rz-cpr-stage { position: relative; width: 200px; height: 200px; }
-.rz-cpr-ring  { width: 200px; height: 200px; }
-.rz-cpr-ring circle { fill: none; stroke-width: 3; }
-
-.rz-cpr-target {
-  stroke: rgba(255, 255, 255, 0.22);
-  stroke-width: 2;
-  transition: stroke var(--transition);
-}
-.rz-cpr-approach {
-  stroke: var(--primary);
-  stroke-width: 3;
-  transform-origin: 100px 100px;
-}
-
-.rz-cpr-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.rz-cpr-key {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 2.5px;
-  color: var(--text-white);
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
-}
-
-.rz-cpr-grade {
-  height: 15px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-}
-.rz-cpr-grade.perfect,
-.rz-cpr-grade.good  { color: var(--primary); }
-.rz-cpr-grade.late  { color: var(--text-grey); }
-.rz-cpr-grade.miss,
-.rz-cpr-grade.early { color: var(--danger); }
-
-.rz-cpr-heart {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 150px;
-  height: 150px;
-  margin: -75px 0 0 -75px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.18), transparent 68%);
-  opacity: 0;
-}
-.rz-cpr-heart.beat { animation: rzCprPulse 0.28s ease-out; }
-@keyframes rzCprPulse {
-  0%   { opacity: 0.9; transform: scale(0.82); }
-  100% { opacity: 0;   transform: scale(1.18); }
-}
-
-.rz-cpr-stage.hit .rz-cpr-target { stroke: var(--primary); stroke-width: 3; }
-.rz-cpr-stage.bad .rz-cpr-target { stroke: var(--danger);  stroke-width: 3; }
-
-.rz-cpr-info {
-  width: 250px;
-  padding: 10px 14px 12px;
-  text-align: center;
-  border: 1px solid var(--structure);
-  border-radius: 5px;
-  background: var(--panel-fill);
-  box-shadow: var(--rz-overlay-ring);
-}
-
-.rz-cpr-title {
-  display: block;
-  margin-bottom: 9px;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.rz-cpr-meter {
-  position: relative;
-  height: 4px;
-  border-radius: var(--radius-xs);
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-}
-.rz-cpr-meter span {
-  display: block;
-  height: 100%;
-  background: var(--danger);
-  transition: width 0.18s ease, background var(--transition);
-}
-.rz-cpr-meter span.passing { background: var(--primary); }
-.rz-cpr-meter i {
-  position: absolute;
-  top: -2px;
-  width: 2px;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.55);
-}
-
-.rz-cpr-stats {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-}
-.rz-cpr-stats span:nth-child(2) { color: var(--text-white); font-weight: 500; }
 
 .rz-toast {
   position: fixed;
@@ -805,25 +582,6 @@
 }
 .rz-wizard-facts > div > span:last-child { color: var(--text-white); }
 
-.rz-wizard-station {
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border: 1px solid var(--row-bd);
-  border-radius: var(--radius-sm);
-  background: var(--row-fill);
-}
-.rz-wizard-station-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--text-grey);
-}
-
 .rz-wizard-nav {
   position: sticky;
   bottom: 0;
@@ -931,8 +689,7 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .rz-diff-item,
 .rz-tag,
 .rz-wizard-step,
-.rz-wizard-facts > div,
-.rz-wizard-station { border-color: transparent; box-shadow: none; }
+.rz-wizard-facts > div { border-color: transparent; box-shadow: none; }
 .rz-field:hover { background: var(--row-fill-hover); }
 .rz-field.is-changed { box-shadow: inset 3px 0 0 rgb(var(--accent-rgb)); }
 .rz-admin-body .pr-row-body > .pr-section { background: #16171a; border-color: transparent; }
@@ -991,16 +748,9 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .rz-stat-box > span,
 .rz-wizard-step,
 .rz-wizard-facts > div > span:first-child,
-.rz-wizard-station-head,
 .rz-crate-title,
 .rz-crate-status,
 .rz-crate-time,
-.rz-knock-time,
-.rz-knock-unit,
-.rz-knock-title,
-.rz-cpr-key,
-.rz-cpr-grade,
-.rz-cpr-title,
 .rz-toast-head,
 .rz-admin-rev,
 .rz-num { font-family: var(--rz-display); }
@@ -1034,12 +784,10 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .rz-admin-rev { font-size: 13px; letter-spacing: 0.8px; text-transform: uppercase; }
 
 .rz-crate-time,
-.rz-knock-time,
 .rz-num { font-variant-numeric: tabular-nums; }
 
 /* --- HUD ------------------------------------------------------------------ */
 .rz-crate,
-.rz-cpr-info,
 .rz-toast,
 .rz-admin-toast { background: #111215; border-color: transparent; border-radius: 0; }
 .rz-crate { box-shadow: inset 3px 0 0 rgb(var(--accent-rgb)), var(--rz-overlay-ring); }
@@ -1050,29 +798,10 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .rz-crate-status { font-size: calc(13px * var(--rz-scale, 1)); font-weight: 700; letter-spacing: 1.8px; }
 .rz-crate-time { font-size: calc(32px * var(--rz-scale, 1)); font-weight: 700; letter-spacing: 0.5px; }
 .rz-crate-title i,
-.rz-knock-title i,
-.rz-cpr-title i,
 .rz-toast-head i { color: rgb(var(--accent-rgb)); }
 
-.rz-ring circle { fill: #111215; stroke-width: 6; stroke-linecap: butt; }
-.rz-ring-track { stroke: rgba(255, 255, 255, 0.08); }
-.rz-ring-fill { stroke: rgb(var(--accent-rgb)); }
-.rz-knock-time { font-size: 46px; font-weight: 700; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8); }
-.rz-knock-unit { font-size: 11px; font-weight: 700; letter-spacing: 3px; }
-.rz-knock-title { font-size: 16px; font-weight: 700; letter-spacing: 4px; color: #ff4a4f; }
-.rz-knock-hint { font-size: 12.5px; }
-.rz-knock.is-critical .rz-knock-time { color: #ff4a4f; }
-.rz-cpr-key { font-size: 18px; font-weight: 700; letter-spacing: 4px; }
-.rz-cpr-grade { font-size: 14px; font-weight: 700; letter-spacing: 2.4px; }
-.rz-cpr-title,
 .rz-toast-head { font-size: 12.5px; font-weight: 700; letter-spacing: 2px; }
 
 /* good states are green, so they never read as a warning */
 .rz-dot.ok,
 .rz-dot-online.is-on { background: var(--rz-success); }
-.rz-cpr-grade.perfect,
-.rz-cpr-grade.good { color: var(--rz-success); }
-.rz-cpr-stage.hit .rz-cpr-target { stroke: var(--rz-success); }
-.rz-cpr-meter span.passing { background: var(--rz-success); }
-.rz-knock.is-paused .rz-ring-fill { stroke: var(--rz-success); }
-.rz-knock.is-paused .rz-knock-title { color: var(--rz-success); }

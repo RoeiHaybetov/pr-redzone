@@ -26,62 +26,12 @@ local function push(target, section, group, list, advanced)
     end
 end
 
-push(A.fields, 'combat', 'Knock', {
-    { path = 'Knock.durationMs', label = 'Bleed-out duration', desc = 'How long a downed player has before elimination.',
-      type = 'int', min = 3000, max = 300000, step = 1000, unit = 'ms', apply = 'session' },
-    { path = 'Knock.downedHealth', label = 'Downed health', desc = 'Health the ped is pinned to while downed. Must stay above 0 so the ped never dies.',
-      type = 'int', min = 10, max = 199, step = 5, apply = 'live' },
-    { path = 'Knock.lethalThreshold', label = 'Lethal threshold', desc = 'Damage below this health triggers the knock. Must be above downed health.',
-      type = 'int', min = 10, max = 199, step = 5, apply = 'live' },
-    { path = 'Knock.crawlSpeed', label = 'Crawl speed', desc = 'Move-rate multiplier while downed. Below ~0.4 feels stuck.', type = 'number', min = 0.1, max = 1.0, step = 0.05, apply = 'live' },
-    { path = 'Knock.immuneWhileDowned', label = 'Immune while downed', desc = 'Further damage cannot shorten the bleed-out timer. Turn OFF to let enemies finish a downed player.',
-      type = 'bool', apply = 'live' },
-    { path = 'Knock.finishThreshold', label = 'Finish threshold', desc = 'Only when immunity is off. Health at or below this counts as finished; the ped is floored at 1 hp and never allowed to actually die.',
-      type = 'int', min = 1, max = 50, step = 1, unit = 'hp', apply = 'live' },
-})
-
-push(A.fields, 'combat', 'Revive', {
-    { path = 'Revive.durationMs', label = 'Revive duration', type = 'int', min = 500, max = 60000, step = 500, unit = 'ms', apply = 'live' },
-    { path = 'Revive.revivedHealth', label = 'Revived health', type = 'int', min = 1, max = 200, step = 5, apply = 'live' },
-    { path = 'Revive.maxDistance', label = 'Max distance', desc = 'Reviver and target must stay within this range.', type = 'number', min = 0.5, max = 20.0, step = 0.5, unit = 'm', apply = 'live' },
-    { path = 'Revive.watchdogGraceMs', label = 'Watchdog grace', type = 'int', min = 500, max = 30000, step = 500, unit = 'ms', apply = 'live', advanced = true },
-})
-
-push(A.fields, 'combat', 'CPR minigame', {
-    { path = 'Revive.minigame.enabled', label = 'Rhythm minigame', desc = 'Off falls back to a plain progress bar.', type = 'bool', apply = 'live' },
-    { path = 'Revive.minigame.bpm', label = 'Compressions per minute', desc = 'Clinical CPR is 100-120.', type = 'int', min = 40, max = 200, step = 5, apply = 'live' },
-    { path = 'Revive.minigame.hitWindowMs', label = 'Hit window', desc = 'Milliseconds either side of the beat that still count. Tighter is harder.',
-      type = 'int', min = 60, max = 500, step = 10, unit = 'ms', apply = 'live' },
-    { path = 'Revive.minigame.requiredAccuracy', label = 'Required accuracy', desc = 'Fraction of compressions that must land. 0.6 = 60%.',
-      type = 'number', min = 0.0, max = 1.0, step = 0.05, apply = 'live' },
-    { path = 'Revive.minigame.control', label = 'Compression key', desc = 'FiveM control id. 22 = SPACE.', type = 'int', min = 1, max = 400, step = 1, apply = 'live', advanced = true },
-    { path = 'Revive.minigame.maxConsecutiveMisses', label = 'Abandon after N misses', desc = '0 disables, so only the final accuracy matters.',
-      type = 'int', min = 0, max = 50, step = 1, apply = 'live', advanced = true },
-})
-
-push(A.fields, 'combat', 'Reboot', {
-    { path = 'Reboot.durationMs', label = 'Reboot duration', type = 'int', min = 1000, max = 120000, step = 500, unit = 'ms', apply = 'live' },
-    { path = 'Reboot.rebootedHealth', label = 'Rebooted health', type = 'int', min = 1, max = 200, step = 5, apply = 'live' },
-    { path = 'Reboot.maxDistance', label = 'Max station distance', desc = 'MUST exceed every station interaction distance, or reboots self-cancel.',
-      type = 'number', min = 1.0, max = 50.0, step = 0.5, unit = 'm', apply = 'live' },
-    { path = 'Reboot.watchdogGraceMs', label = 'Watchdog grace', type = 'int', min = 500, max = 30000, step = 500, unit = 'ms', apply = 'live', advanced = true },
-})
-
-push(A.fields, 'combat', 'Elimination', {
-    { path = 'Elimination.acquireDistance', label = 'DNA acquire distance', type = 'number', min = 0.5, max = 15.0, step = 0.5, unit = 'm', apply = 'live' },
-    { path = 'Elimination.autoRespawnSeconds', label = 'Auto-respawn', desc = 'Ceiling before qbx_medical respawns a corpse. Must allow time for a teammate to reach it.',
-      type = 'int', min = 30, max = 3600, step = 30, unit = 's', apply = 'live' },
-    { path = 'Elimination.expiryMinutes', label = 'Record expiry', desc = 'Should match the DNA item degrade time in ox_inventory.',
-      type = 'int', min = 0, max = 1440, step = 5, unit = 'm', apply = 'live' },
-    { path = 'Elimination.pruneAfterDays', label = 'Prune resolved records after', type = 'int', min = 0, max = 365, step = 1, unit = 'd', apply = 'live', advanced = true },
-})
-
 push(A.fields, 'combat', 'Cooldown', {
-    { path = 'Cooldown.minutes', label = 'Lockout minutes', desc = 'Applied after elimination + normal respawn.',
+    { path = 'Cooldown.minutes', label = 'Lockout minutes', desc = 'Applied when a player who died in the zone respawns.',
       type = 'int', min = 0, max = 1440, step = 5, unit = 'm', apply = 'live', confirm = true },
     { path = 'Cooldown.applyOnQuitInZone', label = 'Lock out combat loggers', desc = 'Disconnecting inside an open zone costs the same lockout as dying. Crashes count — they cannot be told apart from a rage-quit.',
       type = 'bool', apply = 'live' },
-    { path = 'Cooldown.blockReviveWhileOnCooldown', label = 'No revive while locked out', desc = 'Teammates cannot pick up a locked-out player, and a revive from another script is undone.',
+    { path = 'Cooldown.blockReviveWhileOnCooldown', label = 'No revive while locked out', desc = 'A locked-out player revived inside the zone by another script is put back down.',
       type = 'bool', apply = 'live' },
     { path = 'Cooldown.cleanupIntervalMs', label = 'Cleanup interval', type = 'int', min = 30000, max = 3600000, step = 30000, unit = 'ms', apply = 'live', advanced = true },
 })
@@ -124,20 +74,8 @@ push(A.fields, 'combat', 'Loot bag', {
     { path = 'LootBag.maxWeight', label = 'Bag max weight', type = 'int', min = 1000, max = 500000, step = 1000, apply = 'live', advanced = true },
 })
 
-push(A.fields, 'combat', 'Crawl animation', {
-    { path = 'Knock.crawl.dict', label = 'Crawl dictionary', desc = 'Animation dictionary with root motion. Verify with /redzone_findcrawl.', type = 'string', maxLength = 64, apply = 'live' },
-    { path = 'Knock.crawl.forward', label = 'Forward clip', type = 'string', maxLength = 64, apply = 'live' },
-    { path = 'Knock.crawl.backward', label = 'Backward clip', type = 'string', maxLength = 64, apply = 'live' },
-    { path = 'Knock.crawl.idleDict', label = 'Idle dictionary', type = 'string', maxLength = 64, apply = 'live' },
-    { path = 'Knock.crawl.idleClip', label = 'Idle clip', type = 'string', maxLength = 64, apply = 'live' },
-    { path = 'Knock.crawl.turnRate', label = 'Turn rate', desc = 'Degrees of heading change per frame while crawling.', type = 'number', min = 0.1, max = 10.0, step = 0.1, apply = 'live' },
-    { path = 'Knock.crawlClipsets', label = 'Fallback clipsets', desc = 'Tried in order if the crawl dictionary fails to load.', type = 'tags', maxItems = 8, maxLength = 64, apply = 'live' },
-}, true)
-
 push(A.fields, 'economy', 'Items', {
     { path = 'Items.package', label = 'Package item', desc = 'Must exist in ox_inventory.', type = 'string', maxLength = 64, apply = 'live', confirm = true, itemCheck = true },
-    { path = 'Items.teammateDna', label = 'Teammate DNA item', desc = 'Must be unique (stack = false). Changing this invalidates DNA already carried.',
-      type = 'string', maxLength = 64, apply = 'live', confirm = true, itemCheck = true },
     { path = 'Items.keycard', label = 'Keycard item', type = 'string', maxLength = 64, apply = 'live', confirm = true, itemCheck = true },
 })
 
@@ -168,7 +106,6 @@ push(A.fields, 'players', 'Solo squads', {
     { path = 'SoloSquads.inviteCooldownSeconds', label = 'Invite cooldown', type = 'int', min = 0, max = 300, step = 1, unit = 's', apply = 'live' },
     { path = 'SoloSquads.allowMaterialsReward', label = 'Allow materials', type = 'bool', apply = 'live' },
     { path = 'SoloSquads.allowKeycardReward', label = 'Allow keycard', type = 'bool', apply = 'live' },
-    { path = 'SoloSquads.dnaExpiresAtSessionEnd', label = 'DNA expires at session end', type = 'bool', apply = 'session' },
     { path = 'SoloSquads.autoTransferLeaderAfterMinutes', label = 'Auto-transfer leader after', desc = '0 disables. An offline leader keeps the role.',
       type = 'int', min = 0, max = 10080, step = 5, unit = 'm', apply = 'live' },
 })
@@ -216,8 +153,6 @@ push(A.fields, 'server', 'Security', {
     { path = 'Validation.ejectRetries', label = 'Eject retries', type = 'int', min = 0, max = 10, step = 1, apply = 'live', advanced = true },
     { path = 'Validation.ejectRetryDelayMs', label = 'Eject retry delay', type = 'int', min = 200, max = 30000, step = 100, unit = 'ms', apply = 'live', advanced = true },
     { path = 'Validation.ejectCooldownMs', label = 'Eject notify cooldown', type = 'int', min = 500, max = 60000, step = 500, unit = 'ms', apply = 'live', advanced = true },
-    { path = 'Validation.completionToleranceMs', label = 'Progress completion tolerance', desc = 'Slack allowed when a client reports a progress bar finished.',
-      type = 'int', min = 0, max = 2000, step = 50, unit = 'ms', apply = 'live', confirm = true, advanced = true },
     { path = 'Validation.rateLimits', label = 'Action rate limits', type = 'ratelimits', apply = 'live', advanced = true },
 })
 
@@ -293,15 +228,6 @@ push(A.zoneTemplate, 'zones', 'Crate blip', {
     { suffix = 'crate.blipScale', label = 'Blip scale', type = 'number', min = 0.1, max = 3.0, step = 0.05, apply = 'live' },
 }, true)
 
-A.stationTemplate = {
-    { suffix = 'propCoords', label = 'Prop position', type = 'vec4', apply = 'live', placement = 'prop' },
-    { suffix = 'prop', label = 'Prop model', type = 'string', maxLength = 64, apply = 'live', modelCheck = 'prop' },
-    { suffix = 'useExistingProp', label = 'Use existing world prop', desc = 'On for map geometry (nothing is spawned). Off to spawn and manage our own prop.', type = 'bool', apply = 'live' },
-    { suffix = 'playerSpawn', label = 'Rebooted player spawn', desc = 'Must be clear of the prop footprint.', type = 'vec4', apply = 'live', placement = 'coords' },
-    { suffix = 'interactionDistance', label = 'Interaction distance', desc = 'Measured to the prop ORIGIN server-side. Size it to the prop, and keep Reboot.maxDistance above it.',
-      type = 'number', min = 0.5, max = 40.0, step = 0.5, unit = 'm', apply = 'live' },
-}
-
 A.gatedFields = {
     {
         gate = 'allowLiveDebugToggle',
@@ -334,21 +260,10 @@ function A.BuildFields(config)
         end
     end
 
-    for zoneId, zone in pairs(config.Zones or {}) do
+    for zoneId in pairs(config.Zones or {}) do
         for i = 1, #A.zoneTemplate do
             local tpl = A.zoneTemplate[i]
             out[#out + 1] = instantiate(tpl, ('Zones.%s.%s'):format(zoneId, tpl.suffix), zoneId)
-        end
-
-        for idx = 1, #(zone.rebootStations or {}) do
-            for i = 1, #A.stationTemplate do
-                local tpl = A.stationTemplate[i]
-                local copy = instantiate(tpl, ('Zones.%s.rebootStations.%d.%s'):format(zoneId, idx, tpl.suffix), zoneId)
-                copy.section = 'zones'
-                copy.group = ('%s — station %d'):format(zoneId, idx)
-                copy.stationIndex = idx
-                out[#out + 1] = copy
-            end
         end
     end
 

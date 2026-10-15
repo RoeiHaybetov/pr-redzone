@@ -142,7 +142,7 @@ export default function Zones() {
         <EmptyState
           icon="fa-map-location-dot"
           title="No zones yet."
-          hint="Create one with the wizard: draw the shape in the world, place the crate, the seller and at least one reboot station, then publish."
+          hint="Create one with the wizard: draw the shape in the world, place the crate and the seller, then publish."
         />
       ) : null}
 

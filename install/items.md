@@ -2,7 +2,7 @@
 
 pr
 
-This resource needs **six** items that do not ship with an inventory by default. Define them
+This resource needs **five** items that do not ship with an inventory by default. Define them
 before first start: the boot check and every admin-panel publish validate that each configured
 item exists, and name the missing one in the console if it does not.
 
@@ -12,10 +12,6 @@ Where they go:
 ox_inventory   resources/[ox]/ox_inventory/data/items.lua
 qb-inventory   resources/[qb]/qb-core/shared/items.lua
 ```
-
-`teammate_dna` is the only one with a hard requirement beyond existing: it **must be
-non-stackable**, because two samples would otherwise merge into one stack and share a single
-piece of metadata. That is `stack = false` on ox_inventory and `unique = true` on qb-core.
 
 The four reward materials (`metalscrap`, `copper`, `aluminum`, `steel`) already ship with
 ox_inventory and are used pr-is. Rename them in `config.lua` under `Config.Rewards.materials`
@@ -113,25 +109,6 @@ server.
         },
     },
 
-    -- Unique proof of an elimination. Non-stackable so every head is its own slot and
-    -- carries its own server-generated metadata.
-    --
-    -- Deliberately NOT useable: there is no client use-event, because reviving anyone must
-    -- only ever happen through the reboot station's server-validated flow.
-    ['teammate_dna'] = {
-        label = 'Teammate DNA',
-        weight = 200,
-        -- Samples decay. ox_inventory 'degrade' is in MINUTES: the item is destroyed 30
-        -- minutes after it is created, matching Config.Elimination.expiryMinutes.
-        degrade = 30,
-        stack = false,
-        close = true,
-        description = 'A genetic sample taken from a fallen teammate. Degrades in 30 minutes. Take it to a RedZone reboot station.',
-        client = {
-            image = 'teammate_dna.png',
-        },
-    },
-
     ['vangelico_keycard'] = {
         label = 'Vangelico Keycard',
         weight = 50,
@@ -144,30 +121,6 @@ server.
     },
 ```
 
-### Why `teammate_dna` has no `useable` / use handler
-
-Rule: no client event may grant a revive. The head does nothing when used. Its only effect
-is at a reboot station, where the server:
-
-1. resolves the serial to a concrete inventory slot with `strict` metadata matching,
-2. cross-checks that serial against the `redzone_deaths` row,
-3. confirms the combat group, session and zone,
-4. consumes the record with a conditional `UPDATE`,
-5. and only then removes the item and revives the target.
-
-### Showing the teammate's name in the tooltip
-
-`server/elimination.lua` writes a `description` key into the item metadata at creation time:
-
-```lua
-description = ('Recovered from %s'):format(row.char_name)
-```
-
-ox_inventory renders `metadata.description` in the item tooltip, overriding the static item
-description, so each head shows whose it is. The name is written **server-side** from the
-database record — it never comes from the client and cannot be edited into something else
-without failing validation at the reboot station.
-
 ---
 
 ## 3. Item images
@@ -178,11 +131,10 @@ ox_inventory loads images from:
 resources/[ox]/ox_inventory/web/images/
 ```
 
-Add three PNGs, named exactly:
+Add two PNGs, named exactly:
 
 ```
 web/images/redzone_package.png
-web/images/teammate_dna.png
 web/images/vangelico_keycard.png
 ```
 
@@ -201,7 +153,6 @@ Quick placeholder if you want something visible immediately: copy any existing i
 
 ```
 copy web\images\garbage.png       web\images\redzone_package.png
-copy web\images\bandage.png      web\images\teammate_dna.png
 copy web\images\gatecrack.png     web\images\vangelico_keycard.png
 ```
 

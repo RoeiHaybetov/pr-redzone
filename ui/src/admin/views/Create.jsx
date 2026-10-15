@@ -12,8 +12,6 @@ const STEPS = [
     lede: 'The crate spawns once one group has held the zone uncontested. It must sit inside the shape you drew.' },
   { id: 'seller', label: 'Seller', icon: 'fa-user-tie',
     lede: 'Where the buyer stands. Aim at the ground and rotate with the arrow keys to set which way they face.' },
-  { id: 'stations', label: 'Reboot', title: 'Reboot stations', icon: 'fa-plug',
-    lede: 'Where a teammate is brought back. Each station needs a prop and a spawn position clear of that prop footprint.' },
   { id: 'review', label: 'Review', icon: 'fa-clipboard-check' },
 ]
 
@@ -28,7 +26,7 @@ const HOURS = [
 const EMPTY_DRAFT = {
   name: '', points: null, minZ: null, maxZ: null,
   openHour: 20, closeHour: 6, utcOffset: '',
-  crate: null, rewardItem: '', seller: null, stations: [],
+  crate: null, rewardItem: '', seller: null,
 }
 
 const hour = (v) => (String(v).trim() === '' ? NaN : Number(v))
@@ -131,26 +129,6 @@ const BODIES = {
       onClick={() => place('seller', 'ped', 's_m_y_dealer_01')} />
   ),
 
-  stations: ({ draft, place, addStation, removeStation }) => (
-    <>
-      {draft.stations.map((s, i) => (
-        <div className="rz-wizard-station" key={i}>
-          <div className="rz-wizard-station-head">
-            <span>Station {i + 1}</span>
-            <Button variant="ghost" icon="fa-trash" onClick={() => removeStation(i)}>Remove</Button>
-          </div>
-          <PlaceRow variant="default" label="Prop" coords={s.propCoords}
-            onClick={() => place(`station:${i}`, 'prop', 'ex_prop_crate_elec_bc', 'propCoords')} />
-          <PlaceRow variant="default" label="Spawn" coords={s.playerSpawn}
-            onClick={() => place(`station:${i}`, 'coords', null, 'playerSpawn')} />
-        </div>
-      ))}
-      <div className="rz-actions-row">
-        <Button icon="fa-plus" onClick={addStation}>Add a station</Button>
-      </div>
-    </>
-  ),
-
   review: ({ draft, zoneId, problems, ready }) => (
     <>
       <div className="rz-wizard-facts">
@@ -161,7 +139,6 @@ const BODIES = {
         <Fact label="Crate" value={fmt(draft.crate, 0)} />
         <Fact label="Reward" value={draft.rewardItem || '—'} plain />
         <Fact label="Seller" value={fmt(draft.seller, 0)} />
-        <Fact label="Stations" value={draft.stations.length} />
       </div>
       {ready ? (
         <Alert>
@@ -207,13 +184,6 @@ export default function Create() {
         if (!d.confirmed) return
         if (d.slot === 'crate') set({ crate: d.coords })
         else if (d.slot === 'seller') set({ seller: d.coords })
-        else if (d.slot && d.slot.startsWith('station:')) {
-          const i = Number(d.slot.split(':')[1])
-          setDraft((prev) => ({
-            ...prev,
-            stations: prev.stations.map((s, idx) => (idx === i ? { ...s, ...d.patch } : s)),
-          }))
-        }
         notify('Position captured.')
       }
     }
@@ -251,10 +221,6 @@ export default function Create() {
     if (!draft.crate) out.crate = 'Place the crate.'
     if (!draft.rewardItem.trim()) out.crate = out.crate || 'Name the item the crate gives.'
     if (!draft.seller) out.seller = 'Place the seller.'
-    if (!draft.stations.length) out.stations = 'Add at least one reboot station.'
-    else if (draft.stations.some((s) => !s.propCoords || !s.playerSpawn)) {
-      out.stations = 'Every station needs both a prop position and a spawn position.'
-    }
     return out
   }, [draft, zoneId, takenIds])
 
@@ -267,19 +233,10 @@ export default function Create() {
     if (res && res.ok === false && res.error) notify(res.error, true)
   }, [draft.points, notify])
 
-  const place = useCallback(async (slot, kind, model, patchKey) => {
-    const res = await post('rzAdminCreatePlace', { slot, kind, model, patchKey })
+  const place = useCallback(async (slot, kind, model) => {
+    const res = await post('rzAdminCreatePlace', { slot, kind, model })
     if (res && res.ok === false && res.error) notify(res.error, true)
   }, [notify])
-
-  const addStation = useCallback(() => setDraft((d) => ({
-    ...d,
-    stations: [...d.stations, { propCoords: null, playerSpawn: null, useExistingProp: false }],
-  })), [])
-
-  const removeStation = useCallback((i) => setDraft((d) => ({
-    ...d, stations: d.stations.filter((_, idx) => idx !== i),
-  })), [])
 
   const reset = useCallback(() => {
     setDraft(EMPTY_DRAFT)
@@ -301,12 +258,6 @@ export default function Create() {
       schedule: { openHour: Number(draft.openHour), closeHour: Number(draft.closeHour) },
       crate: { coords: draft.crate, rewardItem: draft.rewardItem.trim() },
       seller: { coords: draft.seller },
-      rebootStations: draft.stations.map((s) => ({
-        propCoords: s.propCoords,
-        playerSpawn: s.playerSpawn,
-        ...(s.prop ? { prop: s.prop } : {}),
-        ...(s.useExistingProp ? { useExistingProp: true } : {}),
-      })),
     }
     if (String(draft.utcOffset).trim() !== '') zone.schedule.utcOffset = Number(draft.utcOffset)
 
@@ -340,7 +291,7 @@ export default function Create() {
       <Section title={stepDef.title || stepDef.label} icon={stepDef.icon}>
         {stepDef.lede ? <div className="rz-wizard-lede">{stepDef.lede}</div> : null}
         {BODIES[stepDef.id]({
-          draft, set, zoneId, problems, ready, editShape, place, addStation, removeStation,
+          draft, set, zoneId, problems, ready, editShape, place,
         })}
       </Section>
 

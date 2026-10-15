@@ -900,9 +900,6 @@ local INV = {
         count = function(source, item, metadata, strict)
             return exports.ox_inventory:GetItemCount(source, item, metadata, strict)
         end,
-        slots = function(source, item)
-            return exports.ox_inventory:GetSlotsWithItem(source, item, nil, false)
-        end,
         add = function(source, item, count, metadata)
             return exports.ox_inventory:AddItem(source, item, count, metadata)
         end,
@@ -918,9 +915,6 @@ local INV = {
         end,
         count = function(source, item)
             return exports['qb-inventory']:GetItemCount(source, item)
-        end,
-        slots = function(source, item)
-            return exports['qb-inventory']:GetItemsByName(source, item)
         end,
         add = function(source, item, count, metadata)
             return exports['qb-inventory']:AddItem(source, item, count, nil, metadata, RZ.RESOURCE)
@@ -941,7 +935,6 @@ local INV = {
             local entry = player and player.getInventoryItem(item)
             return entry and entry.count or 0
         end,
-        slots = function() return nil end,
         add = function(source, item, count)
             local player = RZ.Fw.GetPlayer(source)
             if not player then return false end
@@ -987,41 +980,6 @@ function Inv.Count(source, item, metadata, strict)
         return 0
     end
     return tonumber(res) or 0
-end
-
-function Inv.FindAllSlots(source, item)
-    local b = resolveInv()
-    local ok, res = pcall(INV[b].slots, source, item)
-    if not ok then
-        RZ.Log.Integration('inventory', ('FindAllSlots(%s) failed: %s'):format(item, tostring(res)))
-        return {}
-    end
-    if type(res) ~= 'table' then return {} end
-    if b ~= 'qb' then return res end
-
-    local out = {}
-    for i = 1, #res do
-        local entry = res[i]
-        out[i] = {
-            slot = entry.slot,
-            count = entry.amount or entry.count,
-            metadata = entry.info,
-        }
-    end
-    return out
-end
-
-function Inv.FindSlotBySerial(source, item, serial)
-    if type(serial) ~= 'string' or serial == '' then return nil end
-    if not Inv.Caps.metadata then return nil end
-    local slots = Inv.FindAllSlots(source, item)
-    for i = 1, #slots do
-        local slot = slots[i]
-        if slot.metadata and slot.metadata.serial == serial then
-            return slot
-        end
-    end
-    return nil
 end
 
 local function lookupItem(name)
@@ -1151,10 +1109,6 @@ CreateThread(function()
     if not Inv.Caps.drops then
         print('^3[pr-redzone] loot bags are DISABLED: this inventory has no drop inventories. Eliminated players keep their items.^0')
     end
-
-    if not Inv.Caps.metadata then
-        print('^3[pr-redzone] teammate DNA and the reboot station are DISABLED: this inventory cannot store a per-item serial, so a head cannot be tied to a death record.^0')
-    end
 end)
 
 local DEATH_STATE_BAG = 'qbx_medical:deathState'
@@ -1187,89 +1141,10 @@ function Medical.IsDeadOrLastStand(source)
     return state == DEATH_STATE.DEAD or state == DEATH_STATE.LAST_STAND
 end
 
-function Medical.IsNormallyRespawning(source)
-    return Medical.GetDeathState(source) == DEATH_STATE.DEAD
-end
-
 function Medical.GetHealth(source)
     local ped = GetPlayerPed(source)
     if not ped or ped == 0 then return 0 end
     return GetEntityHealth(ped)
-end
-
-local function setDeathState(source, state)
-    local f = RZ.Fw.Flavour()
-
-    if f == 'qb' then
-        RZ.Fw.SetMeta(source, 'isdead', state == DEATH_STATE.DEAD)
-        RZ.Fw.SetMeta(source, 'inlaststand', state == DEATH_STATE.LAST_STAND)
-        return
-    end
-
-    if f ~= 'qbx' then return end
-
-    local ply = Player(source)
-    if not ply then return end
-    ply.state:set(DEATH_STATE_BAG, state, true)
-end
-
-function Medical.ClearDeathState(source)
-    setDeathState(source, DEATH_STATE.ALIVE)
-end
-
-Medical.ExitRedZoneDowned = Medical.ClearDeathState
-
-function Medical.EnterRedZoneDowned(source)
-    if Medical.GetDeathState(source) ~= DEATH_STATE.ALIVE then
-        setDeathState(source, DEATH_STATE.ALIVE)
-    end
-end
-
-function Medical.MarkFullyDead(source)
-    TriggerClientEvent(RZ.Event.KILL_LOCAL, source)
-end
-
--- qb-ambulancejob keeps its laststand and death screen in client-local variables, so
--- clearing the metadata alone leaves its timer running and it kills the player later. Its
--- own revive event is the only thing that resets those, so it is fired before ours.
-function Medical.ReleaseClient(source)
-    if RZ.Fw.Flavour() ~= 'qb' then return end
-    TriggerClientEvent('hospital:client:Revive', source)
-end
-
-function Medical.ReclaimDowned(source)
-    setDeathState(source, DEATH_STATE.ALIVE)
-    Medical.ReleaseClient(source)
-end
-
-function Medical.Revive(source, coords, health)
-    local f = RZ.Fw.Flavour()
-    local handedOff = true
-
-    if f == 'qbx' or f == 'qb' then
-        local ok, err = pcall(function()
-            if f == 'qb' then
-                TriggerClientEvent('hospital:client:Revive', source)
-            else
-                exports.qbx_medical:Revive(source)
-            end
-        end)
-        if not ok then
-            RZ.Log.Integration('medical', 'Revive failed: ' .. tostring(err))
-            handedOff = false
-        end
-    end
-
-    SetTimeout(250, function()
-        if GetPlayerName(source) == nil then return end
-        Medical.ClearDeathState(source)
-        TriggerClientEvent(RZ.Event.RESTORE, source, {
-            coords = coords and { x = coords.x, y = coords.y, z = coords.z, w = coords.w } or nil,
-            health = health,
-        })
-    end)
-
-    return handedOff
 end
 
 local respawnCallbacks = {}

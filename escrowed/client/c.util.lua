@@ -2,12 +2,10 @@ RZ = RZ or {}
 RZ.Notify = {}
 RZ.Progress = {}
 RZ.Target = {}
-RZ.MedicalCl = {}
 
 local Notify = RZ.Notify
 local Progress = RZ.Progress
 local Target = RZ.Target
-local Medical = RZ.MedicalCl
 
 local function started(resource)
     local state = GetResourceState(resource)
@@ -93,7 +91,6 @@ local function resolveTarget()
     return targetFlavour
 end
 
-local registeredPlayerOptions = {}
 local registeredEntities = {}
 local registeredModels = {}
 local registeredZones = {}
@@ -159,36 +156,6 @@ local function maxDistance(options)
     end
 
     return best
-end
-
-function Target.AddPlayerOptions(options)
-    if resolveTarget() == 'qb' then
-        local translated, keys = translate(options)
-        for i = 1, #keys do
-            registeredPlayerOptions[#registeredPlayerOptions + 1] = keys[i]
-        end
-        exports['qb-target']:AddGlobalPlayer({ distance = maxDistance(options), options = translated })
-        return
-    end
-
-    for i = 1, #options do
-        registeredPlayerOptions[#registeredPlayerOptions + 1] = options[i].name
-    end
-    exports.ox_target:addGlobalPlayer(options)
-end
-
-function Target.RemovePlayerOptions()
-    if #registeredPlayerOptions == 0 then return end
-    local names = registeredPlayerOptions
-    registeredPlayerOptions = {}
-
-    pcall(function()
-        if resolveTarget() == 'qb' then
-            exports['qb-target']:RemoveGlobalPlayer(names)
-        else
-            exports.ox_target:removeGlobalPlayer(names)
-        end
-    end)
 end
 
 function Target.AddEntity(entity, options)
@@ -295,7 +262,6 @@ function Target.RemoveAllSpheres()
 end
 
 function Target.RemoveAll()
-    Target.RemovePlayerOptions()
     for entity in pairs(registeredEntities) do
         Target.RemoveEntity(entity)
     end
@@ -308,42 +274,3 @@ CreateThread(function()
     if resolveTarget() then return end
     lib.print.error('[pr-redzone] no targeting resource found. ox_target or qb-target must be started.')
 end)
-
-local medicalFlavour = nil
-
-function Medical.Flavour()
-    if medicalFlavour then return medicalFlavour end
-    medicalFlavour = started('qbx_medical') and 'qbx' or started('qb-ambulancejob') and 'qb' or nil
-    return medicalFlavour
-end
-
-function Medical.SeedDeathTime(seconds)
-    if Medical.Flavour() ~= 'qbx' then return false end
-    return pcall(function() exports.qbx_medical:IncrementDeathTime(seconds) end)
-end
-
-function Medical.KillPlayer()
-    if Medical.Flavour() == 'qb' then
-        return pcall(function() TriggerEvent('hospital:client:KillPlayer') end)
-    end
-    return pcall(function() exports.qbx_medical:KillPlayer() end)
-end
-
-function Medical.AssertAlive()
-    if Medical.Flavour() ~= 'qbx' then return false end
-    LocalPlayer.state:set('qbx_medical:deathState', 1, true)
-    return true
-end
-
-function Medical.WasTakenOver()
-    if Medical.Flavour() ~= 'qbx' then return false end
-    return LocalPlayer.state['qbx_medical:deathState'] ~= 1
-end
-
-function Medical.IsLastStand()
-    if Medical.Flavour() == 'qb' then
-        local ped = PlayerPedId()
-        return not IsEntityDead(ped) and GetEntityHealth(ped) > 0
-    end
-    return LocalPlayer.state['qbx_medical:deathState'] == 2
-end

@@ -23,8 +23,8 @@ if not Config then Config = {} end
 --- own, so in practice that is an ox_core or ND_Core server.
 Config.Framework = 'auto'
 
---- 'auto' | 'ox' | 'qb' | 'esx'. Loot bags need ox_inventory; teammate DNA needs per-item
---- metadata (ox or qb). The resource prints what it can and cannot do at boot.
+--- 'auto' | 'ox' | 'qb' | 'esx'. Loot bags need ox_inventory. The resource prints what it
+--- can and cannot do at boot.
 Config.Inventory = 'auto'
 
 --- Verbose console output, admin debug commands, and every zone held open 24/7 instead of
@@ -99,9 +99,6 @@ Config.Items = {
     --- Fallback only: each zone names its own package and that one wins.
     package = 'hippy_meth_box',
 
-    --- Unique, non-stackable proof of an elimination. Required to reboot a teammate.
-    teammateDna = 'teammate_dna',
-
     keycard = 'vangelico_keycard',
 }
 
@@ -120,72 +117,9 @@ Config.Rewards = {
     keycardAmount = 1,
 }
 
--- ====== KNOCK / REVIVE / REBOOT ============================================
-
-Config.Knock = {
-    --- How long a downed player has before elimination. Server-timed.
-    durationMs = 30000,
-
-    --- Health the player is pinned to while downed, and the incoming-damage threshold that
-    --- triggers the downed state. Both stay above 0 so the ped never reaches GTA's death
-    --- state and never hands control to the medical resource's last stand.
-    downedHealth = 125,
-    lethalThreshold = 135,
-
-    --- Crawl speed. 1.0 is a normal walk; below ~0.4 reads as "stuck" rather than "slow".
-    crawlSpeed = 0.5,
-
-    --- True makes a downed player immune, guaranteeing the full timer. False lets enemies
-    --- finish them off.
-    immuneWhileDowned = false,
-}
-
-Config.Revive = {
-    --- Deliberately long: real CPR is not a five-second job and the minigame needs beats.
-    durationMs = 15000,
-    revivedHealth = 150,
-
-    --- Reviver and target must stay this close for the whole progress bar.
-    maxDistance = 3.0,
-
-    --- A ring closes on the target and you press SPACE as it lands. The server computes the
-    --- beat count itself, so a client cannot inflate its own accuracy. Failing resumes the
-    --- casualty's bleed-out from where it paused.
-    minigame = {
-        enabled = true,
-        bpm = 110,                -- 100-120 is the real clinical range
-        hitWindowMs = 170,        -- tolerance either side of the beat; below ~90 is punishing
-        requiredAccuracy = 0.6,   -- fraction of beats that must land, 0.0-1.0
-    },
-}
-
-Config.Reboot = {
-    durationMs = 10000,
-    rebootedHealth = 175,
-
-    --- The actor must stay this close to the station throughout. MUST be larger than the
-    --- station's own interactionDistance — both measure to the same point, but this one is
-    --- re-checked every tick, so a smaller value cancels the reboot instantly. Checked at
-    --- start-up, and the server warns if you get it wrong.
-    maxDistance = 8.0,
-}
-
-Config.Elimination = {
-    --- DNA is taken from the CORPSE, not from a dropped prop, so respawning forfeits it.
-    acquireDistance = 2.5,
-
-    --- Ceiling on how long you lie dead before an automatic respawn; you can always hold E
-    --- to go sooner. Long enough for a teammate to reach the body and get to a station.
-    --- Qbox only — elsewhere the death resource's own timer applies.
-    autoRespawnSeconds = 600,
-
-    --- An unclaimed elimination record expires after this long, matching the DNA item's own
-    --- decay so a sample never outlives the record behind it. 0 disables expiry.
-    expiryMinutes = 30,
-}
-
 Config.Cooldown = {
-    --- Zone lockout after being eliminated and respawning.
+    --- Zone lockout after dying in the zone and respawning. A player picked back up where
+    --- they fell (EMS, a medkit) is still in the fight and gets no lockout.
     minutes = 30,
     command = 'cooldown', -- players check their own remaining lockout with this
 
@@ -194,7 +128,7 @@ Config.Cooldown = {
     --- crash.
     applyOnQuitInZone = true,
 
-    --- Without this a squad could keep a locked-out member on their feet indefinitely.
+    --- A locked-out player revived inside the zone by another script is put back down.
     blockReviveWhileOnCooldown = true,
 
     --- Burn-out: a locked-out player standing in the zone loses health rather than being
@@ -309,8 +243,8 @@ Config.Schedule = {
 --
 -- Everything below is ONE EXAMPLE zone, kept so a fresh install has something to fight over
 -- before anyone has drawn anything. Delete it once you have made your own; nothing else in
--- the resource refers to it. Every subsystem — crate timer, seller, stations, records,
--- cooldowns — is keyed per zone id, so several zones can run at once.
+-- the resource refers to it. Every subsystem — crate timer, seller, loot bags, cooldowns —
+-- is keyed per zone id, so several zones can run at once.
 
 Config.Zones = {
     main = {
@@ -366,21 +300,5 @@ Config.Zones = {
         },
 
         seller = { coords = vec4(2324.6887, 2517.0310, 46.6677, 77.0554) },
-
-        rebootStations = { {
-            --- useExistingProp attaches to map geometry already in the world instead of
-            --- spawning a copy, which would clip through the original.
-            propCoords = vec4(2328.6340, 2570.5862, 46.5677, 56.2384),
-            useExistingProp = true,
-
-            --- Where the rebooted teammate is placed. MUST be clear of the prop's footprint
-            --- or they spawn inside it.
-            playerSpawn = vec4(2328.1997, 2571.9749, 46.6766, 242.8819),
-
-            --- Size this to the PROP, not to arm's reach: the server measures to the prop's
-            --- origin, which for a large model sits in its middle. A crate needs ~4, an 11 m
-            --- bus needs ~8. Too small and it is unreachable.
-            interactionDistance = 4.0,
-        } },
     },
 }

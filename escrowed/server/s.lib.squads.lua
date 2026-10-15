@@ -694,12 +694,6 @@ function Groups.AreTeammates(sourceA, sourceB, zoneId)
     return a ~= nil and a == b
 end
 
-function Groups.SourceMatchesGroupId(source, groupId, zoneId)
-    if type(groupId) ~= 'string' or groupId == '' then return false end
-    local current = Groups.GetStableGroupId(source, zoneId)
-    return current ~= nil and current == groupId
-end
-
 local function hasGroupPrefix(groupId, kind)
     return type(groupId) == 'string' and groupId:sub(1, #kind + 1) == (kind .. ':')
 end
@@ -712,31 +706,9 @@ function Groups.IsGangGroupId(groupId)
     return hasGroupPrefix(groupId, Groups.TYPE_GANG)
 end
 
-function Groups.SplitSoloSquadGroupId(groupId)
-    if not Groups.IsSoloSquadGroupId(groupId) then return nil, nil end
-    local sessionId, squadId = groupId:match('^solo_squad:([^:]+):(.+)$')
-    return squadId, sessionId
-end
-
 function Groups.GangIdFromGroupId(groupId)
     if not Groups.IsGangGroupId(groupId) then return nil end
     return groupId:match('^gang:(.+)$')
-end
-
-function Groups.IsGroupIdCurrent(groupId, zoneId)
-    if Groups.IsGangGroupId(groupId) then
-        local gangId = Groups.GangIdFromGroupId(groupId)
-        return gangId ~= nil and Gangs.Exists(gangId)
-    end
-    if Groups.IsSoloSquadGroupId(groupId) then
-        local squadId, sessionId = Groups.SplitSoloSquadGroupId(groupId)
-        if not squadId or not sessionId then return false end
-        if Config.SoloSquads.dnaExpiresAtSessionEnd and not Session.IsCurrent(zoneId, sessionId) then
-            return false
-        end
-        return true
-    end
-    return false
 end
 
 function Groups.GetAliveGroupsInZone(zoneId)

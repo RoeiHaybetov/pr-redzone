@@ -314,10 +314,7 @@ end)
 local active = {}
 local expiryRunning = false
 
-local PARTICIPANT = {
-    [RZ.State.ALIVE] = true, [RZ.State.DOWNED] = true, [RZ.State.BEING_REVIVED] = true,
-    [RZ.State.ELIMINATED] = true, [RZ.State.BEING_REBOOTED] = true,
-}
+local PARTICIPANT = { [RZ.State.ALIVE] = true, [RZ.State.ELIMINATED] = true }
 
 local function skip(source, trigger, reason)
     RZ.Log.LootBagSkip(source, trigger, reason)

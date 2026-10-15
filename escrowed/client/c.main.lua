@@ -2,12 +2,9 @@ RZ = RZ or {}
 
 RZ.Client = {
     state = RZ.State.OUTSIDE,
-    serverMonoOffset = 0,
     zonesOpen = {},
     canSee = false,
     crateTimerAt = 0,
-    downedPeers = {},
-    eliminatedPeers = {},
 }
 RZ.ConfigSync = {}
 RZ.Hud = {}
@@ -27,16 +24,6 @@ function C.IsAlive()
     return C.state == RZ.State.ALIVE
 end
 
-function C.IsDowned()
-    return C.state == RZ.State.DOWNED or C.state == RZ.State.BEING_REVIVED
-end
-
-function C.GetKnockRemaining()
-    if not C.knockDeadline then return C.knockRemainingMs or 0 end
-    local remaining = C.knockDeadline - (GetGameTimer() + C.serverMonoOffset)
-    return remaining > 0 and remaining or 0
-end
-
 function C.RequestSync()
     CreateThread(function()
         Wait(1000)
@@ -52,24 +39,11 @@ local function snapZ(x, y, z)
     return z
 end
 
-local function releasePed(ped)
-    SetEntityInvincible(ped, false)
-    ResetPedMovementClipset(ped, 0.0)
-    SetPedMoveRateOverride(ped, 1.0)
-    SetPlayerSprint(PlayerId(), true)
-    ClearPedTasks(ped)
-end
-
 RegisterNetEvent(RZ.Event.SYNC_SELF, function(data)
     if type(data) ~= 'table' then return end
     local previousState = C.state
     C.state = data.state or RZ.State.OUTSIDE
     C.zoneId = data.zoneId
-    C.knockRemainingMs = data.knockRemainingMs
-    C.knockDeadline = data.knockDeadline
-    if data.serverMono then
-        C.serverMonoOffset = data.serverMono - GetGameTimer()
-    end
 
     if previousState ~= C.state then
         TriggerEvent(RZ.Local.STATE_CHANGED, C.state, previousState)
@@ -98,65 +72,6 @@ RegisterNetEvent(RZ.Event.SYNC_WORLD, function(data)
         C.crateTimer = data.crateTimer
         C.crateTimerAt = GetGameTimer()
     end
-
-    C.downedPeers = data.downedPeers or C.downedPeers
-    C.eliminatedPeers = data.eliminatedPeers or C.eliminatedPeers
-end)
-
-RegisterNetEvent(RZ.Event.RESTORE, function(data)
-    data = type(data) == 'table' and data or {}
-    local ped = PlayerPedId()
-    RZ.Knock.ClearLocalDowned()
-
-    if data.coords then
-        if RZ.AdminPlacement and RZ.AdminPlacement.IsActive() then
-            RZ.AdminPlacement.Cancel()
-        end
-
-        local x, y = data.coords.x + 0.0, data.coords.y + 0.0
-        local z = snapZ(x, y, data.coords.z + 0.0)
-
-        if IsEntityDead(ped) then
-            local heading = data.coords.w and (data.coords.w + 0.0) or GetEntityHeading(ped)
-            NetworkResurrectLocalPlayer(x, y, z, heading, true, false)
-            ped = PlayerPedId()
-        end
-
-        FreezeEntityPosition(ped, false)
-        RenderScriptCams(false, false, 0, true, true)
-        ClearFocus()
-        SetEntityCoords(ped, x, y, z, false, false, false, false)
-        if data.coords.w then
-            SetEntityHeading(ped, data.coords.w + 0.0)
-        end
-    end
-
-    local health = data.health and math.floor(data.health) or 0
-    if health > 0 then
-        RZ.Knock.BeginRestoreGrace()
-        SetEntityHealth(ped, health)
-    end
-
-    releasePed(ped)
-
-    if data.coords and (IsScreenFadedOut() or IsScreenFadingOut()) then
-        CreateThread(function()
-            local deadline = GetGameTimer() + 3000
-            while IsScreenFadingOut() and GetGameTimer() < deadline do
-                Wait(50)
-            end
-
-            local dwell = GetGameTimer() + 250
-            while GetGameTimer() < dwell do
-                if not IsScreenFadedOut() then return end
-                Wait(50)
-            end
-
-            if IsScreenFadedOut() then DoScreenFadeIn(500) end
-        end)
-    end
-
-    LocalPlayer.state:set('invBusy', false, true)
 end)
 
 RegisterNetEvent(RZ.Event.COOLDOWN_BURN, function(data)
@@ -183,30 +98,6 @@ RegisterNetEvent(RZ.Event.FORCE_EJECT, function(data)
 
     local x, y = data.x + 0.0, data.y + 0.0
     SetEntityCoords(ped, x, y, snapZ(x, y, data.z + 0.0), false, false, false, false)
-end)
-
-RegisterNetEvent(RZ.Event.KILL_LOCAL, function()
-    RZ.Knock.ClearLocalDowned()
-    CreateThread(function()
-        RZ.MedicalCl.SeedDeathTime(Config.Elimination.autoRespawnSeconds)
-        if not RZ.MedicalCl.KillPlayer() then
-            SetEntityHealth(PlayerPedId(), 0)
-            return
-        end
-
-        local deadline = GetGameTimer() + 2500
-        while GetGameTimer() < deadline do
-            Wait(100)
-            if RZ.MedicalCl.IsLastStand() then
-                RZ.MedicalCl.KillPlayer()
-                return
-            end
-        end
-    end)
-end)
-
-RegisterNetEvent(RZ.Event.CANCEL_ACTION, function(_action)
-    RZ.Progress.Cancel()
 end)
 
 AddEventHandler('onClientResourceStart', function(resourceName)
@@ -271,19 +162,6 @@ local function mergeIntoConfig(payload)
                 keepFields(merged.seller, zone.seller, { 'model', 'scenario', 'interactionDistance' })
             end
 
-            local stations = {}
-            for i = 1, #(zone.rebootStations or {}) do
-                local st = zone.rebootStations[i]
-                local prev = (existing.rebootStations or {})[i] or {}
-                stations[i] = {
-                    propCoords = S.JsonToVector(st.propCoords) or prev.propCoords,
-                    prop = st.prop or prev.prop,
-                    useExistingProp = st.useExistingProp,
-                    interactionDistance = st.interactionDistance or prev.interactionDistance,
-                    playerSpawn = prev.playerSpawn,
-                }
-            end
-            merged.rebootStations = stations
             if RZ.Defaults and RZ.Defaults.ApplyZone then
                 RZ.Defaults.ApplyZone(merged)
             end
@@ -294,7 +172,7 @@ local function mergeIntoConfig(payload)
         Config.Zones = zones
     end
 
-    for _, name in ipairs({ 'Knock', 'Revive', 'Reboot', 'Elimination', 'Hud', 'Fallbacks' }) do
+    for _, name in ipairs({ 'Hud', 'Fallbacks' }) do
         if type(payload[name]) == 'table' then
             for k, v in pairs(payload[name]) do Config[name][k] = v end
         end
@@ -316,7 +194,6 @@ function Sync.Apply(payload)
     RZ.Blips.RemoveAll()
 
     RZ.Zones.Setup()
-    RZ.Interactions.RegisterPlayerOptions()
     RZ.Blips.Refresh()
     RZ.Blips.RefreshCrate()
     RZ.Entities.Reconcile()
@@ -332,7 +209,7 @@ RegisterNetEvent(RZ.Event.CONFIG_SYNC, function(payload)
     Sync.Apply(payload)
 end)
 
-local hudRunning, lastCrateKey, lastKnockKey = false, nil, nil
+local hudRunning, lastCrateKey = false, nil
 
 local function hideOverlay(action, key)
     if key == 'hidden' then return key end
@@ -381,47 +258,16 @@ local function pushCrate()
     })
 end
 
-local function pushKnock()
-    if not (RZ.Knock and RZ.Knock.IsLocallyDowned()) then
-        lastKnockKey = hideOverlay('rzKnock', lastKnockKey)
-        return
-    end
-
-    local remaining = C.GetKnockRemaining()
-    local paused = C.knockDeadline == nil
-    local key = ('%d|%s'):format(math.floor(remaining / 1000), tostring(paused))
-    if key == lastKnockKey then return end
-    lastKnockKey = key
-    SendNUIMessage({
-        action = 'rzKnock',
-        data = {
-            visible = true,
-            remainingMs = remaining,
-            durationMs = Config.Knock.durationMs,
-            paused = paused,
-            labels = {
-                title = locale('knock.hud_title'),
-                paused = locale('knock.hud_reviving'),
-                hint = locale('knock.hud_hint'),
-            },
-        },
-    })
-end
-
 function Hud.Start()
     if hudRunning then return end
     hudRunning = true
     CreateThread(function()
         while hudRunning do
-            if C.IsInOpenZone() or (RZ.Knock and RZ.Knock.IsLocallyDowned()) then
+            if C.IsInOpenZone() then
                 pushCrate()
-                pushKnock()
                 Wait(250)
             else
-                if lastCrateKey ~= 'hidden' or lastKnockKey ~= 'hidden' then
-                    pushCrate()
-                    pushKnock()
-                end
+                if lastCrateKey ~= 'hidden' then pushCrate() end
                 Wait(1000)
             end
         end
@@ -430,13 +276,11 @@ end
 
 function Hud.Invalidate()
     lastCrateKey = nil
-    lastKnockKey = nil
 end
 
 function Hud.Stop()
     hudRunning = false
     hideOverlay('rzCrate', nil)
-    hideOverlay('rzKnock', nil)
 end
 
 local shownBags = {}
@@ -504,13 +348,8 @@ Hud.Start()
 AddEventHandler('onClientResourceStop', function(resourceName)
     if resourceName ~= RZ.RESOURCE then return end
     hudRunning = false
-    RZ.Knock.ClearLocalDowned()
     RZ.Entities.RemoveAll()
     RZ.Blips.RemoveAll()
     Ui.Clear()
     RZ.Target.RemoveAll()
-
-    local ped = PlayerPedId()
-    if DoesEntityExist(ped) then releasePed(ped) end
-    LocalPlayer.state:set('invBusy', false, true)
 end)

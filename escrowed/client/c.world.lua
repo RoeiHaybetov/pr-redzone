@@ -262,8 +262,6 @@ function Blips.RemoveAll()
 end
 
 local sellerPeds = {}
-local stationProps = {}
-local existingStationsBound = {}
 local crateProp = nil
 local failedModels = {}
 local reportedModels = {}
@@ -354,12 +352,6 @@ local function destroy(entity)
     end
 end
 
-local function stationKey(zoneId, index)
-    return ('%s:%d'):format(zoneId, index)
-end
-
-Entities.StationKey = stationKey
-
 function Entities.SpawnSeller(zoneId)
     local existing = sellerPeds[zoneId]
     if existing and DoesEntityExist(existing) then return end
@@ -408,58 +400,6 @@ function Entities.RemoveSeller()
     end
 end
 
-function Entities.SpawnStations(zoneId)
-    local zone = Config.Zones[zoneId]
-    if not zone then return end
-
-    for index = 1, #zone.rebootStations do
-        local station = zone.rebootStations[index]
-        local byZone = stationProps[zoneId]
-
-        if station.useExistingProp then
-            local key = stationKey(zoneId, index)
-            if not existingStationsBound[key] then
-                existingStationsBound[key] = true
-                RZ.Interactions.AttachStationModel(station.prop, zoneId, index)
-            end
-        elseif not byZone or not byZone[index] or not DoesEntityExist(byZone[index]) then
-            local hash = loadModel(station.prop, 'prop')
-
-            if hash then
-                local at = station.propCoords
-                local prop = CreateObject(hash, at.x, at.y, at.z, false, false, false)
-                SetModelAsNoLongerNeeded(hash)
-
-                if prop and prop ~= 0 then
-                    placeProp(prop, at)
-                    makeStatic(prop)
-                    stationProps[zoneId] = stationProps[zoneId] or {}
-                    stationProps[zoneId][index] = prop
-                    RZ.Interactions.AttachStation(prop, zoneId, index)
-                else
-                    lib.print.error(('[pr-redzone] station %d of zone %s - CreateObject("%s") returned nothing.')
-                        :format(index, zoneId, tostring(station.prop)))
-                end
-            end
-        end
-    end
-end
-
-function Entities.RemoveStations()
-    for zoneId, byZone in pairs(stationProps) do
-        for index, prop in pairs(byZone) do
-            destroy(prop)
-            byZone[index] = nil
-        end
-        stationProps[zoneId] = nil
-    end
-
-    for key in pairs(existingStationsBound) do
-        RZ.Target.RemoveSphere('station:' .. key)
-        existingStationsBound[key] = nil
-    end
-end
-
 function Entities.RefreshCrate()
     local crate = RZ.Client.crate
     if not crate then
@@ -486,13 +426,11 @@ end
 
 function Entities.SpawnForZone(zoneId)
     Entities.SpawnSeller(zoneId)
-    Entities.SpawnStations(zoneId)
     Entities.RefreshCrate()
 end
 
 function Entities.RemoveAll()
     Entities.RemoveSeller()
-    Entities.RemoveStations()
     destroy(crateProp)
     crateProp = nil
 end

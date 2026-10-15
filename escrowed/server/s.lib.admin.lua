@@ -207,7 +207,7 @@ end
 
 local WORLD_LIMIT = 20000.0
 local WORLD_Z_MIN, WORLD_Z_MAX = -1000.0, 5000.0
-local MAX_POINTS, MAX_ZONE_ID, MAX_STATIONS = 64, 32, 16
+local MAX_POINTS, MAX_ZONE_ID = 64, 32
 
 local function isFiniteNumber(n)
     return type(n) == 'number' and n == n and n ~= math.huge and n ~= -math.huge
@@ -410,36 +410,6 @@ local function crossZone(err, warn, candidate, zoneId, zone)
     if shapeOk then
         if zone.crate then checkInside(err, zone, zoneId, 'crate', zone.crate.coords) end
         if zone.seller then checkInside(err, zone, zoneId, 'seller', zone.seller.coords) end
-
-        local stations = zone.rebootStations or {}
-        if #stations > MAX_STATIONS then
-            err('Zone "%s": %d reboot stations is too many (max %d).', zoneId, #stations, MAX_STATIONS)
-        end
-
-        local maxDist = (candidate.Reboot or {}).maxDistance
-        for i = 1, #stations do
-            local st = stations[i]
-            if type(st) ~= 'table' then
-                err('Zone "%s": reboot station #%d is not a table.', zoneId, i)
-                st = {}
-            end
-            checkInside(err, zone, zoneId, ('reboot station #%d'):format(i), st.propCoords)
-            checkInside(err, zone, zoneId, ('reboot station #%d spawn'):format(i), st.playerSpawn)
-
-            if maxDist and st.interactionDistance and maxDist <= st.interactionDistance then
-                err('Zone "%s" station #%d: Reboot.maxDistance (%.1f) must be GREATER than the station interaction distance (%.1f), or every reboot cancels immediately.',
-                    zoneId, i, maxDist, st.interactionDistance)
-            end
-
-            if S.IsVector(st.playerSpawn) and S.IsVector(st.propCoords) then
-                local gap = RZ.Geo.Dist2D(vec3(st.playerSpawn.x, st.playerSpawn.y, st.playerSpawn.z),
-                    vec3(st.propCoords.x, st.propCoords.y, st.propCoords.z))
-                if gap < 2.0 then
-                    warn('Zone "%s" station #%d: the reboot spawn is only %.2fm from the prop — the player may spawn inside it.',
-                        zoneId, i, gap)
-                end
-            end
-        end
     end
 
     -- Zone data arrives whole (wizard, import, history), never field by field, so the
@@ -463,26 +433,6 @@ function V.Cross(candidate)
     local errors, warnings = {}, {}
     local function err(fmt, ...) errors[#errors + 1] = fmt:format(...) end
     local function warn(fmt, ...) warnings[#warnings + 1] = fmt:format(...) end
-
-    local knock = candidate.Knock or {}
-    if knock.downedHealth and knock.lethalThreshold and knock.lethalThreshold <= knock.downedHealth then
-        err('Knock: lethal threshold (%s) must be ABOVE downed health (%s), or the knock can never trigger.',
-            knock.lethalThreshold, knock.downedHealth)
-    end
-    if knock.downedHealth and knock.downedHealth >= 200 then
-        err('Knock: downed health must stay below 200.')
-    end
-
-    local elim = candidate.Elimination or {}
-    if elim.autoRespawnSeconds and elim.autoRespawnSeconds < 120 then
-        warn('Elimination: auto-respawn is only %ss. A teammate may not have time to reach the body, take DNA and reach a station.',
-            elim.autoRespawnSeconds)
-    end
-    if elim.expiryMinutes and elim.expiryMinutes > 0 and elim.autoRespawnSeconds
-        and (elim.expiryMinutes * 60) < elim.autoRespawnSeconds then
-        warn('Elimination: records expire (%sm) before the corpse auto-respawns (%ss).',
-            elim.expiryMinutes, elim.autoRespawnSeconds)
-    end
 
     local val = candidate.Validation or {}
     if val.intervalMs and val.intervalMs < 250 then
@@ -518,7 +468,6 @@ function V.CheckItems(candidate)
     end
     local items = candidate.Items or {}
     check('Package item', items.package)
-    check('Teammate DNA item', items.teammateDna)
     check('Keycard item', items.keycard)
     for _, row in ipairs((candidate.Rewards or {}).materials or {}) do
         check('Material reward', row.item)
@@ -527,17 +476,6 @@ function V.CheckItems(candidate)
         if zone.crate then check(('Zone "%s" crate reward'):format(zoneId), zone.crate.rewardItem) end
         if zone.package and zone.package ~= (zone.crate and zone.crate.rewardItem) then
             check(('Zone "%s" sellable package'):format(zoneId), zone.package)
-        end
-    end
-    if items.teammateDna and V.ItemExists(items.teammateDna) then
-        local item = safe(function() return RZ.Inv.GetItem(items.teammateDna) end)
-        local backend = safe(function() return RZ.Inv.Backend() end)
-        if type(item) == 'table' then
-            if backend == 'ox' and item.stack ~= false then
-                errors[#errors + 1] = ('Teammate DNA item "%s" must be non-stackable (stack = false) in ox_inventory.'):format(items.teammateDna)
-            elseif backend == 'qb' and not item.unique then
-                errors[#errors + 1] = ('Teammate DNA item "%s" must be non-stackable (unique = true) in qb-core shared/items.lua.'):format(items.teammateDna)
-            end
         end
     end
     return errors
@@ -601,13 +539,29 @@ end
 
 Store.RebuildConfig = rebuildConfig
 
+-- Settings of systems that were removed (knock, revive, DNA and reboot). Older saves still
+-- carry them; they are dropped quietly instead of being reported as rejected.
+local RETIRED = {
+    '^Knock%.', '^Revive%.', '^Reboot%.', '^Elimination%.', '%.rebootStations%.',
+    '^Items%.teammateDna$', '^SoloSquads%.dnaExpiresAtSessionEnd$', '^Validation%.completionToleranceMs$',
+}
+
+local function retired(path)
+    for i = 1, #RETIRED do
+        if path:find(RETIRED[i]) then return true end
+    end
+    return false
+end
+
 local function filterOverrides(raw)
     local accepted, rejected = {}, {}
     if type(raw) ~= 'table' then return accepted, rejected end
     if type(raw.__zones) == 'table' then accepted.__zones = S.FromJson(raw.__zones) end
     for path, jsonValue in pairs(raw.fields or {}) do
         local field = RZ.AdminSchema.GetField(path)
-        if not field then
+        if not field and retired(path) then
+            -- dropped
+        elseif not field then
             rejected[#rejected + 1] = ('%s (not an editable path)'):format(path)
         else
             local value = S.FromJson(jsonValue)
@@ -1006,15 +960,6 @@ function Sync.Build()
 
     for zoneId, zone in pairs(Config.Zones or {}) do
         if zone.enabled then
-            local stations = {}
-            for i = 1, #(zone.rebootStations or {}) do
-                local st = zone.rebootStations[i]
-                stations[i] = {
-                    propCoords = S.VectorToJson(st.propCoords), prop = st.prop,
-                    useExistingProp = st.useExistingProp == true, interactionDistance = st.interactionDistance,
-                }
-            end
-
             local points = {}
             for i = 1, #(zone.points or {}) do points[i] = S.VectorToJson(zone.points[i]) end
 
@@ -1039,7 +984,6 @@ function Sync.Build()
                     scenario = zone.seller.scenario,
                     interactionDistance = zone.seller.interactionDistance,
                 },
-                rebootStations = stations,
             }
         end
     end
@@ -1050,16 +994,6 @@ function Sync.Build()
         revision = RZ.AdminStore.GetRevision(),
         build = build,
         Zones = zones,
-        Knock = {
-            crawl = Config.Knock.crawl, crawlClipsets = Config.Knock.crawlClipsets,
-            crawlSpeed = Config.Knock.crawlSpeed, downedHealth = Config.Knock.downedHealth,
-            lethalThreshold = Config.Knock.lethalThreshold, durationMs = Config.Knock.durationMs,
-            immuneWhileDowned = Config.Knock.immuneWhileDowned and true or false,
-            finishThreshold = Config.Knock.finishThreshold or 5,
-        },
-        Revive = { maxDistance = Config.Revive.maxDistance },
-        Reboot = { maxDistance = Config.Reboot.maxDistance },
-        Elimination = { acquireDistance = Config.Elimination.acquireDistance },
         Hud = Config.Hud,
         Fallbacks = Config.Fallbacks,
     }
@@ -1432,7 +1366,7 @@ function Diag.Run()
 
     if standalone then
         add('Dependencies', 'Death / respawn', NA,
-            'standalone — the knock system owns the downed player outright, so no death resource is needed')
+            'standalone — deaths and respawns are read from the ped itself, so no death resource is needed')
     else
         addBackend('Death / respawn', { 'qbx_medical', 'qb-ambulancejob' }, 'See the medical adapter.')
     end
@@ -1500,8 +1434,8 @@ function Diag.Run()
         zoneCount = zoneCount + 1
         if zone.enabled then
             enabledCount = enabledCount + 1
-            add('Zones', zoneId, OK, ('%s, radius %.1f, %d station(s)'):format(
-                RZ.Schedule.IsOpen(zoneId) and 'OPEN' or 'closed', zone.radius or 0, #(zone.rebootStations or {})))
+            add('Zones', zoneId, OK, ('%s, radius %.1f'):format(
+                RZ.Schedule.IsOpen(zoneId) and 'OPEN' or 'closed', zone.radius or 0))
         else
             add('Zones', zoneId, NA, 'disabled')
         end
@@ -1525,17 +1459,15 @@ function Diag.Dashboard()
     local activeOverrides = RZ.AdminApply.GetZoneOverrides()
 
     local zones = {}
-    local totalTracked, totalDowned, totalEliminated = 0, 0, 0
+    local totalTracked, totalEliminated = 0, 0
 
     for zoneId, zone in pairs(Config.Zones or {}) do
         if zone.enabled then
-            local players, downed, eliminated, blocked = 0, 0, 0, 0
+            local players, eliminated, blocked = 0, 0, 0
             for _, record in pairs(tracked) do
                 if record.zoneId == zoneId then
                     players = players + 1
-                    if record.state == RZ.State.DOWNED or record.state == RZ.State.BEING_REVIVED then
-                        downed = downed + 1
-                    elseif record.state == RZ.State.ELIMINATED then
+                    if record.state == RZ.State.ELIMINATED then
                         eliminated = eliminated + 1
                     elseif record.state == RZ.State.RESPAWN_BLOCKED then
                         blocked = blocked + 1
@@ -1545,13 +1477,12 @@ function Diag.Dashboard()
 
             local crate = RZ.Crate.GetTimerState(zoneId)
             totalTracked = totalTracked + players
-            totalDowned = totalDowned + downed
             totalEliminated = totalEliminated + eliminated
 
             zones[#zones + 1] = {
                 id = zoneId, label = zone.label, enabled = true,
                 open = RZ.Schedule.IsOpen(zoneId), sessionId = RZ.Session.GetId(zoneId),
-                players = players, downed = downed, eliminated = eliminated, blocked = blocked,
+                players = players, eliminated = eliminated, blocked = blocked,
                 aliveGroups = #RZ.Groups.GetAliveGroupsInZone(zoneId),
                 crateActive = crate.active, crateRunning = crate.running,
                 crateRemainingMs = crate.remainingMs, crateIntervalMs = crate.intervalMs,
@@ -1572,7 +1503,7 @@ function Diag.Dashboard()
             clock.hour, clock.min, clock.sec),
         utcOffset = RZ.Time.OffsetLabel(clock.offset),
         forcedOpen = RZ.Schedule.IsForcedOpen(), debug = Config.Debug == true, zones = zones,
-        totals = { tracked = totalTracked, downed = totalDowned, eliminated = totalEliminated,
+        totals = { tracked = totalTracked, eliminated = totalEliminated,
             adminSessions = RZ.AdminSessions.Count() },
         deferred = RZ.AdminApply.GetDeferred() and true or false,
     }

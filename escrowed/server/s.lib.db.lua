@@ -28,18 +28,6 @@ local SCHEMA = {
         `expires_at` BIGINT NOT NULL, `updated_at` BIGINT NOT NULL,
         PRIMARY KEY (`citizenid`, `zone_id`), KEY `idx_redzone_cooldowns_expires` (`expires_at`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-    [[CREATE TABLE IF NOT EXISTS `redzone_deaths` (
-        `death_id` VARCHAR(96) NOT NULL, `citizenid` VARCHAR(64) NOT NULL, `license` VARCHAR(128) NULL,
-        `char_name` VARCHAR(128) NOT NULL, `gang_id` VARCHAR(64) NOT NULL, `zone_id` VARCHAR(64) NOT NULL,
-        `pos_x` DOUBLE NOT NULL, `pos_y` DOUBLE NOT NULL, `pos_z` DOUBLE NOT NULL,
-        `status` VARCHAR(16) NOT NULL DEFAULT 'pending', `item_serial` VARCHAR(96) NULL,
-        `acquired_by` VARCHAR(64) NULL, `created_at` BIGINT NOT NULL, `acquired_at` BIGINT NULL,
-        `rebooted_at` BIGINT NULL, `expires_at` BIGINT NULL,
-        PRIMARY KEY (`death_id`), UNIQUE KEY `uniq_redzone_deaths_serial` (`item_serial`),
-        KEY `idx_redzone_deaths_status` (`status`), KEY `idx_redzone_deaths_citizen` (`citizenid`),
-        KEY `idx_redzone_deaths_zone_status` (`zone_id`, `status`),
-        KEY `idx_redzone_deaths_created` (`created_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
     [[CREATE TABLE IF NOT EXISTS `redzone_squads` (
         `squad_id` VARCHAR(96) NOT NULL, `name` VARCHAR(64) NOT NULL,
         `leader_citizenid` VARCHAR(64) NOT NULL, `created_at` BIGINT NOT NULL,
@@ -119,100 +107,6 @@ end
 
 function Db.PruneExpiredCooldowns(nowMs)
     return affected(MySQL.query.await('DELETE FROM `redzone_cooldowns` WHERE `expires_at` <= ?', { nowMs }))
-end
-
--- Death ids whose record is still PENDING (claimable from the corpse). Kept in memory so
--- the peer sync, which runs every couple of seconds, never has to ask the database.
-local pendingDeaths = {}
-
-function Db.IsDeathPending(deathId)
-    return deathId ~= nil and pendingDeaths[deathId] == true
-end
-
-function Db.InsertDeath(row)
-    local res = MySQL.query.await([[INSERT IGNORE INTO `redzone_deaths`
-        (`death_id`, `citizenid`, `license`, `char_name`, `gang_id`, `zone_id`,
-         `pos_x`, `pos_y`, `pos_z`, `status`, `created_at`, `expires_at`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]], {
-        row.death_id, row.citizenid, row.license, row.char_name, row.gang_id, row.zone_id,
-        row.pos_x, row.pos_y, row.pos_z, RZ.DeathStatus.PENDING, row.created_at, row.expires_at
-    })
-    local inserted = affected(res) > 0
-    if inserted then pendingDeaths[row.death_id] = true end
-    return inserted
-end
-
-function Db.GetDeath(deathId)
-    return MySQL.single.await('SELECT * FROM `redzone_deaths` WHERE `death_id` = ?', { deathId })
-end
-
-function Db.GetDeathBySerial(serial)
-    return MySQL.single.await('SELECT * FROM `redzone_deaths` WHERE `item_serial` = ?', { serial })
-end
-
-function Db.FetchPendingDeaths(zoneId)
-    local rows = MySQL.query.await('SELECT * FROM `redzone_deaths` WHERE `zone_id` = ? AND `status` = ?',
-        { zoneId, RZ.DeathStatus.PENDING }) or {}
-    for i = 1, #rows do pendingDeaths[rows[i].death_id] = true end
-    return rows
-end
-
-local BY_STATUS = ' AND `status` = ?'
-local BY_SERIAL_AND_STATUS = ' AND `item_serial` = ? AND `status` = ?'
-
-local function transitionDeath(sets, filter, params)
-    local res = MySQL.query.await(
-        'UPDATE `redzone_deaths` SET `status` = ?' .. sets .. ' WHERE `death_id` = ?' .. filter, params)
-    return affected(res) == 1
-end
-
-function Db.ClaimDeath(deathId, serial, acquirerCitizenId, nowMs)
-    local ok = transitionDeath(', `item_serial` = ?, `acquired_by` = ?, `acquired_at` = ?', BY_STATUS,
-        { RZ.DeathStatus.ACQUIRED, serial, acquirerCitizenId, nowMs, deathId, RZ.DeathStatus.PENDING })
-    if ok then pendingDeaths[deathId] = nil end
-    return ok
-end
-
-function Db.ReleaseDeathClaim(deathId, serial)
-    local ok = transitionDeath(', `item_serial` = NULL, `acquired_by` = NULL, `acquired_at` = NULL',
-        BY_SERIAL_AND_STATUS, { RZ.DeathStatus.PENDING, deathId, serial, RZ.DeathStatus.ACQUIRED })
-    if ok then pendingDeaths[deathId] = true end
-    return ok
-end
-
-function Db.ConsumeDeathForReboot(deathId, serial, nowMs)
-    return transitionDeath(', `rebooted_at` = ?', BY_SERIAL_AND_STATUS,
-        { RZ.DeathStatus.REBOOTED, nowMs, deathId, serial, RZ.DeathStatus.ACQUIRED })
-end
-
-function Db.RestoreDeathAfterFailedReboot(deathId, serial)
-    return transitionDeath(', `rebooted_at` = NULL', BY_SERIAL_AND_STATUS,
-        { RZ.DeathStatus.ACQUIRED, deathId, serial, RZ.DeathStatus.REBOOTED })
-end
-
-function Db.ForfeitDeath(deathId)
-    pendingDeaths[deathId] = nil
-    return transitionDeath('', BY_STATUS, { RZ.DeathStatus.EXPIRED, deathId, RZ.DeathStatus.PENDING })
-end
-
-function Db.ExpirePendingDeaths(nowMs)
-    local filter = ' WHERE `status` = ? AND `expires_at` IS NOT NULL AND `expires_at` <= ?'
-    local rows = MySQL.query.await('SELECT * FROM `redzone_deaths`' .. filter,
-        { RZ.DeathStatus.PENDING, nowMs }) or {}
-
-    if #rows > 0 then
-        MySQL.query.await('UPDATE `redzone_deaths` SET `status` = ?' .. filter,
-            { RZ.DeathStatus.EXPIRED, RZ.DeathStatus.PENDING, nowMs })
-        for i = 1, #rows do pendingDeaths[rows[i].death_id] = nil end
-    end
-
-    return rows
-end
-
-function Db.PruneOldDeaths(cutoffMs)
-    return affected(MySQL.query.await(
-        'DELETE FROM `redzone_deaths` WHERE `created_at` < ? AND `status` IN (?, ?)',
-        { cutoffMs, RZ.DeathStatus.REBOOTED, RZ.DeathStatus.EXPIRED }))
 end
 
 function Db.InsertSquad(squad)

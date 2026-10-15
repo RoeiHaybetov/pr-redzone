@@ -33,10 +33,7 @@ function Store.Track(source, citizenid)
         lastOutsideCoords = nil, lastEjectAt = 0, ejectCount = 0,
         lastBurnAt = nil, lastBurnWarnAt = nil, burnDown = nil,
         burnLastHealth = nil, burnIgnored = nil, bagSnapshot = nil,
-        deathId = nil, deathCoords = nil, eliminationZoneId = nil,
-        knockRemainingMs = nil, knockDeadline = nil, reviverSrc = nil,
-        healthGraceUntil = nil, downedAt = nil, lastReclaimAt = nil, medicalTookOver = nil,
-        eliminatedAt = nil, elimSeenDead = nil, elimKillResent = nil,
+        deathCoords = nil, eliminationZoneId = nil, aliveSince = nil,
         affiliation = nil, canSee = nil, visibilityCheckedAt = 0,
         lastHitAt = nil, lastAttackAt = nil,
     }
@@ -88,9 +85,6 @@ local function publish(record)
     TriggerClientEvent(RZ.Event.SYNC_SELF, record.src, {
         state = record.state,
         zoneId = record.zoneId,
-        knockRemainingMs = record.knockRemainingMs,
-        knockDeadline = record.knockDeadline,
-        serverMono = RZ.Mono(),
     })
 end
 
